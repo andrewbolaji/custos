@@ -56,7 +56,9 @@ class QdrantVectorStore(VectorStore):
 
     def recreate_collection(self) -> None:
         """Drop and recreate the collection. Used for idempotent re-indexing."""
-        self._client.recreate_collection(
+        if self._client.collection_exists(self._collection):
+            self._client.delete_collection(self._collection)
+        self._client.create_collection(
             collection_name=self._collection,
             vectors_config=models.VectorParams(
                 size=self._vector_size,

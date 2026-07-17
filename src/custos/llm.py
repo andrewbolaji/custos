@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass
 
@@ -25,6 +26,8 @@ import anthropic
 from custos.interfaces import LLM, Answer, Chunk, Citation
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_MODEL = "claude-sonnet-4-6"
 
 _SYSTEM_PROMPT = """\
 You are Custos, a private AI assistant that answers questions from a business's \
@@ -92,12 +95,12 @@ class ClaudeLLM(LLM):
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = "claude-sonnet-4-6",
+        model: str | None = None,
         temperature: float = 0.1,
         max_tokens: int = 2048,
     ) -> None:
         self._client = anthropic.Anthropic(api_key=api_key)
-        self._model = model
+        self._model = model or os.environ.get("CUSTOS_MODEL", DEFAULT_MODEL)
         self._temperature = temperature
         self._max_tokens = max_tokens
 
