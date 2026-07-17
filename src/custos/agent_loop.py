@@ -288,10 +288,10 @@ class AgentLoop:
         - "refused": if the answer is a refusal
         - "limit_hit": if bounds are exceeded
 
-        Each turn uses messages.stream() so we get real-time text deltas.
-        After the stream completes, we check the final message for tool_use
-        blocks. If present, we process tools and loop. If absent, the text
-        has already been streamed -- we just resolve citations.
+        Each turn uses messages.stream(). Text deltas are buffered per
+        turn and only emitted if the turn ends without tool_use blocks.
+        This prevents premature narration ("I'll send the email") from
+        streaming to the user before a confirmation card appears.
 
         The sync run() method is unchanged. This is additive, not a fork.
         """
@@ -314,8 +314,12 @@ class AgentLoop:
                 )
                 return
 
-            # Stream this turn
-            streamed_text_parts: list[str] = []
+            # Stream this turn, buffering text until we know the stop reason.
+            # If the turn ends with tool_use, the text is internal thinking
+            # and must NOT be streamed (it could narrate "I'll send the
+            # email" before the confirmation card). Only text-only turns
+            # are final answers and get emitted as text_delta events.
+            buffered_text: list[str] = []
             with self._llm.client.messages.stream(
                 model=self._llm.model,
                 max_tokens=self._llm.max_tokens,
@@ -329,11 +333,7 @@ class AgentLoop:
                         event.type == "content_block_delta"
                         and hasattr(event.delta, "text")
                     ):
-                        streamed_text_parts.append(event.delta.text)
-                        yield AgentEvent(
-                            kind="text_delta",
-                            data={"text": event.delta.text},
-                        )
+                        buffered_text.append(event.delta.text)
 
                 final_message = stream.get_final_message()
 
@@ -348,8 +348,13 @@ class AgentLoop:
                     })
 
             if not tool_use_blocks:
-                # Final answer -- text was already streamed. Resolve citations.
-                full_text = "".join(streamed_text_parts)
+                # Final answer -- now emit the buffered text as deltas.
+                for text_chunk in buffered_text:
+                    yield AgentEvent(
+                        kind="text_delta",
+                        data={"text": text_chunk},
+                    )
+                full_text = "".join(buffered_text)
                 answer = ClaudeLLM.resolve_response(
                     full_text, prompt_parts.chunk_lookup
                 )
