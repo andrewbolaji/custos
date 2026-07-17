@@ -24,6 +24,12 @@ export interface ToolUseEvent {
   simulated?: boolean;
 }
 
+export interface PendingConfirmation {
+  actionId: string;
+  toolName: string;
+  arguments: Record<string, unknown>;
+}
+
 export interface Message {
   id: string;
   role: "user" | "assistant";
@@ -31,17 +37,19 @@ export interface Message {
   citations: Citation[];
   refused: boolean;
   toolUses: ToolUseEvent[];
+  pendingConfirmation: PendingConfirmation | null;
   timestamp: number;
 }
 
 /**
  * Chat state machine states.
  *
- * The "never stuck" invariant: every state except "streaming" allows the user
- * to send a new message. "streaming" allows cancel. There is no terminal
- * state where the user is locked out.
+ * The "never stuck" invariant: every state allows the user to send a
+ * new message or take an action. "streaming" allows cancel.
+ * "awaiting_confirmation" allows approve, reject, or cancel.
+ * There is no terminal state where the user is locked out.
  */
-export type ChatStatus = "idle" | "streaming" | "error";
+export type ChatStatus = "idle" | "streaming" | "awaiting_confirmation" | "error";
 
 export interface ChatState {
   messages: Message[];

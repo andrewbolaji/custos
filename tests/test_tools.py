@@ -9,7 +9,9 @@ from __future__ import annotations
 from typing import Any
 
 from custos.interfaces import Chunk, Retriever
+from custos.tools.file_ticket import FileTicketTool
 from custos.tools.search_documents import SearchDocumentsTool
+from custos.tools.send_email import SendEmailTool
 from custos.tools.summarize_section import SummarizeSectionTool
 
 
@@ -115,3 +117,51 @@ class TestSummarizeSectionTool:
         schema = tool.input_schema
         assert schema["type"] == "object"
         assert "topic" in schema["properties"]
+
+
+class TestSendEmailTool:
+    def test_is_side_effectful(self) -> None:
+        tool = SendEmailTool()
+        assert tool.side_effectful is True
+
+    def test_result_is_simulated(self) -> None:
+        tool = SendEmailTool()
+        result = tool.run({"to": "a@example.com", "subject": "Hi", "body": "Hello"})
+        assert result.simulated is True
+        assert "(simulated)" in str(result.output)
+
+    def test_has_input_schema(self) -> None:
+        tool = SendEmailTool()
+        schema = tool.input_schema
+        assert "to" in schema["properties"]
+        assert "subject" in schema["properties"]
+        assert "body" in schema["properties"]
+
+    def test_name(self) -> None:
+        assert SendEmailTool().name == "send_email"
+
+
+class TestFileTicketTool:
+    def test_is_side_effectful(self) -> None:
+        tool = FileTicketTool()
+        assert tool.side_effectful is True
+
+    def test_result_is_simulated(self) -> None:
+        tool = FileTicketTool()
+        result = tool.run({"title": "Fix leak", "description": "Kitchen"})
+        assert result.simulated is True
+        assert "(simulated)" in str(result.output)
+
+    def test_has_input_schema(self) -> None:
+        tool = FileTicketTool()
+        schema = tool.input_schema
+        assert "title" in schema["properties"]
+        assert "description" in schema["properties"]
+
+    def test_name(self) -> None:
+        assert FileTicketTool().name == "file_ticket"
+
+    def test_default_priority(self) -> None:
+        tool = FileTicketTool()
+        result = tool.run({"title": "Test", "description": "Test desc"})
+        assert "medium" in str(result.output)

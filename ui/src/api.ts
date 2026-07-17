@@ -2,7 +2,7 @@
  * API client for Custos. Handles SSE streaming with AbortController.
  */
 
-import type { Citation, ToolUseEvent } from "./types";
+import type { Citation, PendingConfirmation, ToolUseEvent } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
@@ -10,6 +10,7 @@ export interface StreamCallbacks {
   onToken: (text: string) => void;
   onCitations: (citations: Citation[]) => void;
   onToolUse: (event: ToolUseEvent) => void;
+  onConfirmAction: (pending: PendingConfirmation) => void;
   onRefused: (text: string) => void;
   onError: (detail: string) => void;
   onDone: () => void;
@@ -105,6 +106,39 @@ export function streamChat(
   return controller;
 }
 
+export interface ConfirmResult {
+  status: string;
+  tool_name: string;
+  output: string;
+  simulated: boolean;
+}
+
+/**
+ * Approve or reject a pending side-effectful action.
+ */
+export async function confirmAction(
+  actionId: string,
+  sessionId: string,
+  approved: boolean,
+): Promise<ConfirmResult> {
+  const resp = await fetch(`${API_BASE}/api/chat/confirm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action_id: actionId,
+      session_id: sessionId,
+      approved,
+    }),
+  });
+
+  if (!resp.ok) {
+    const detail = await resp.text();
+    throw new Error(detail);
+  }
+
+  return resp.json();
+}
+
 function handleSSEEvent(
   event: string,
   dataStr: string,
@@ -124,6 +158,13 @@ function handleSSEEvent(
         callbacks.onToolUse({
           tool_name: data.tool_name ?? "",
           simulated: data.simulated,
+        });
+        break;
+      case "confirm_action":
+        callbacks.onConfirmAction({
+          actionId: data.action_id ?? "",
+          toolName: data.tool_name ?? "",
+          arguments: data.arguments ?? {},
         });
         break;
       case "refused":

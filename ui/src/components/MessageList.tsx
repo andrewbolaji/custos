@@ -7,9 +7,11 @@ import { Message } from "./Message";
 interface MessageListProps {
   messages: MessageType[];
   status: ChatStatus;
+  onApprove?: (actionId: string) => void;
+  onReject?: (actionId: string) => void;
 }
 
-export function MessageList({ messages, status }: MessageListProps) {
+export function MessageList({ messages, status, onApprove, onReject }: MessageListProps) {
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -27,6 +29,8 @@ export function MessageList({ messages, status }: MessageListProps) {
             msg.role === "assistant" &&
             msg === messages[messages.length - 1]
           }
+          onApprove={onApprove}
+          onReject={onReject}
         />
       ))}
       <div ref={endRef} />

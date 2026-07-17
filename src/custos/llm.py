@@ -92,7 +92,7 @@ class ClaudeLLM(LLM):
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = "claude-sonnet-4-20250514",
+        model: str = "claude-sonnet-4-6",
         temperature: float = 0.1,
         max_tokens: int = 2048,
     ) -> None:

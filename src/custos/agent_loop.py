@@ -40,6 +40,7 @@ import anthropic
 
 from custos.interfaces import Citation, ToolCall, ToolResult
 from custos.llm import ClaudeLLM, PromptParts
+from custos.pending_actions import PendingActionStore
 from custos.tool_registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -58,7 +59,7 @@ class AgentEvent:
     streaming, or aggregated for the sync response.
     """
 
-    kind: str  # "tool_use", "tool_result", "text", "limit_hit", "needs_confirmation"
+    kind: str  # "tool_use", "tool_result", "text", "text_delta", "limit_hit", "confirm_action"
     data: dict[str, Any] = field(default_factory=dict)
 
 
@@ -103,7 +104,7 @@ class AgentLoop:
 
         Returns the final AgentResult with text, citations, events,
         and tool results. Side-effectful tool calls are NOT executed;
-        they produce a needs_confirmation event instead.
+        they produce a confirm_action event instead.
         """
         events: list[AgentEvent] = []
         tool_results: list[ToolResult] = []
@@ -191,13 +192,14 @@ class AgentLoop:
 
                 if tool.side_effectful:
                     # HARD GATE: side-effectful tools do NOT execute.
-                    # They produce a needs_confirmation event. The API
+                    # They produce a confirm_action event. The API
                     # layer surfaces this to the user.
                     events.append(AgentEvent(
-                        kind="needs_confirmation",
+                        kind="confirm_action",
                         data={
                             "tool_name": call.tool_name,
-                            "side_effectful": True,
+                            "action_id": "",
+                            "arguments": call.arguments,
                         },
                     ))
                     logger.info(
@@ -278,12 +280,16 @@ class AgentLoop:
         self,
         prompt_parts: PromptParts,
         user_query: str,
+        *,
+        session_id: str = "",
+        pending_store: PendingActionStore | None = None,
     ) -> Generator[AgentEvent, None, None]:
         """Execute the agent loop, streaming text deltas from the final turn.
 
         Yields AgentEvent objects:
         - "text_delta": a token from the final answer (streamed in real time)
         - "tool_use" / "tool_result": tool activity (emitted before streaming)
+        - "confirm_action": side-effectful tool needs confirmation (has action_id)
         - "citations": resolved citations (emitted after the final text)
         - "refused": if the answer is a refusal
         - "limit_hit": if bounds are exceeded
@@ -392,11 +398,22 @@ class AgentLoop:
                 )
 
                 if tool.side_effectful:
+                    # Create a PendingAction if store is available
+                    action_id = ""
+                    if pending_store is not None and session_id:
+                        pending = pending_store.create(
+                            session_id=session_id,
+                            tool_name=call.tool_name,
+                            arguments=call.arguments,
+                        )
+                        action_id = pending.action_id
+
                     yield AgentEvent(
-                        kind="needs_confirmation",
+                        kind="confirm_action",
                         data={
                             "tool_name": call.tool_name,
-                            "side_effectful": True,
+                            "action_id": action_id,
+                            "arguments": call.arguments,
                         },
                     )
                     logger.info(

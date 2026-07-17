@@ -1,13 +1,16 @@
 import type { Message as MessageType } from "../types";
 
 import { Citation } from "./Citation";
+import { ConfirmationCard } from "./ConfirmationCard";
 
 interface MessageProps {
   message: MessageType;
   isStreaming: boolean;
+  onApprove?: (actionId: string) => void;
+  onReject?: (actionId: string) => void;
 }
 
-export function Message({ message, isStreaming }: MessageProps) {
+export function Message({ message, isStreaming, onApprove, onReject }: MessageProps) {
   const isUser = message.role === "user";
 
   return (
@@ -31,6 +34,14 @@ export function Message({ message, isStreaming }: MessageProps) {
               </span>
             ))}
           </div>
+        )}
+        {message.pendingConfirmation && !isUser && onApprove && onReject && (
+          <ConfirmationCard
+            pending={message.pendingConfirmation}
+            onApprove={onApprove}
+            onReject={onReject}
+            disabled={isStreaming}
+          />
         )}
       </div>
       {message.citations.length > 0 && (

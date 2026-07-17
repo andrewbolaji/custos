@@ -225,8 +225,8 @@ class TestAgentLoopSideEffectGating:
         assert side_tool.executed is False
         # No tool results (it was blocked)
         assert len(result.tool_results) == 0
-        # A needs_confirmation event was emitted
-        confirm_events = [e for e in result.events if e.kind == "needs_confirmation"]
+        # A confirm_action event was emitted
+        confirm_events = [e for e in result.events if e.kind == "confirm_action"]
         assert len(confirm_events) == 1
         assert confirm_events[0].data["tool_name"] == "send_email"
 

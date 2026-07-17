@@ -2,8 +2,8 @@
  * Unit tests for the useChat hook state machine.
  *
  * Tests the "never stuck" invariant: every transition from streaming,
- * error, cancel, or completion returns the UI to a state where the user
- * can send another message (status === "idle").
+ * error, cancel, awaiting_confirmation, or completion returns the UI
+ * to a state where the user can send another message.
  *
  * These test the state machine logic, not the SSE transport.
  */
@@ -18,6 +18,13 @@ import { useChat } from "../hooks/useChat";
 let lastCallbacks: StreamCallbacks | null = null;
 let lastController: AbortController | null = null;
 
+// Track confirmAction calls
+let confirmActionCalls: Array<{
+  actionId: string;
+  sessionId: string;
+  approved: boolean;
+}> = [];
+
 vi.mock("../api", () => ({
   streamChat: (
     _query: string,
@@ -29,12 +36,22 @@ vi.mock("../api", () => ({
     lastController = new AbortController();
     return lastController;
   },
+  confirmAction: (actionId: string, sessionId: string, approved: boolean) => {
+    confirmActionCalls.push({ actionId, sessionId, approved });
+    return Promise.resolve({
+      status: approved ? "executed" : "rejected",
+      tool_name: "send_email",
+      output: 'Email sent. (simulated)',
+      simulated: true,
+    });
+  },
 }));
 
 describe("useChat: never-stuck invariant", () => {
   beforeEach(() => {
     lastCallbacks = null;
     lastController = null;
+    confirmActionCalls = [];
   });
 
   afterEach(() => {
@@ -45,6 +62,13 @@ describe("useChat: never-stuck invariant", () => {
     const { result } = renderHook(() => useChat());
     expect(result.current.state.status).toBe("idle");
     expect(result.current.state.messages).toHaveLength(0);
+  });
+
+  it("exposes a stable sessionId", () => {
+    const { result, rerender } = renderHook(() => useChat());
+    const id1 = result.current.sessionId;
+    rerender();
+    expect(result.current.sessionId).toBe(id1);
   });
 
   it("transitions to streaming when a message is sent", () => {
@@ -79,7 +103,6 @@ describe("useChat: never-stuck invariant", () => {
     });
 
     expect(result.current.state.status).toBe("idle");
-    // User can send another message (idle state)
   });
 
   it("returns to idle after cancel", () => {
@@ -96,7 +119,6 @@ describe("useChat: never-stuck invariant", () => {
     });
 
     expect(result.current.state.status).toBe("idle");
-    // User can send another message (idle state)
   });
 
   it("transitions to error state on error, not stuck", () => {
@@ -113,7 +135,6 @@ describe("useChat: never-stuck invariant", () => {
 
     expect(result.current.state.status).toBe("error");
     expect(result.current.state.errorMessage).toBe("Connection refused");
-    // Even in error, user can still interact (retry, dismiss, new message)
   });
 
   it("error state returns to idle via clearError", () => {
@@ -136,7 +157,6 @@ describe("useChat: never-stuck invariant", () => {
 
     expect(result.current.state.status).toBe("idle");
     expect(result.current.state.errorMessage).toBeNull();
-    // User can send another message (idle state)
   });
 
   it("error state returns to streaming via retry", async () => {
@@ -164,7 +184,6 @@ describe("useChat: never-stuck invariant", () => {
     });
 
     expect(result.current.state.status).toBe("streaming");
-    // The retry is in progress; after completion it will return to idle
   });
 
   it("accumulates tokens in the assistant message", () => {
@@ -233,5 +252,97 @@ describe("useChat: never-stuck invariant", () => {
     const assistantMsg = result.current.state.messages[1];
     expect(assistantMsg.citations).toHaveLength(1);
     expect(assistantMsg.citations[0].doc_id).toBe("handbook-001");
+  });
+});
+
+describe("useChat: confirmation flow", () => {
+  beforeEach(() => {
+    lastCallbacks = null;
+    lastController = null;
+    confirmActionCalls = [];
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("transitions to awaiting_confirmation on confirm_action event", () => {
+    const { result } = renderHook(() => useChat());
+
+    act(() => {
+      result.current.sendMessage("send an email");
+    });
+
+    act(() => {
+      lastCallbacks!.onConfirmAction({
+        actionId: "uuid-123",
+        toolName: "send_email",
+        arguments: { to: "a@b.com" },
+      });
+      lastCallbacks!.onDone();
+    });
+
+    expect(result.current.state.status).toBe("awaiting_confirmation");
+    const msg = result.current.state.messages[1];
+    expect(msg.pendingConfirmation).not.toBeNull();
+    expect(msg.pendingConfirmation!.actionId).toBe("uuid-123");
+    expect(msg.pendingConfirmation!.toolName).toBe("send_email");
+  });
+
+  it("approveAction calls confirmAction and returns to idle", async () => {
+    const { result } = renderHook(() => useChat());
+
+    act(() => {
+      result.current.sendMessage("send an email");
+    });
+
+    act(() => {
+      lastCallbacks!.onConfirmAction({
+        actionId: "uuid-123",
+        toolName: "send_email",
+        arguments: { to: "a@b.com" },
+      });
+      lastCallbacks!.onDone();
+    });
+
+    expect(result.current.state.status).toBe("awaiting_confirmation");
+
+    await act(async () => {
+      result.current.approveAction("uuid-123");
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    expect(confirmActionCalls).toHaveLength(1);
+    expect(confirmActionCalls[0].approved).toBe(true);
+    expect(result.current.state.status).toBe("idle");
+    // Pending confirmation is cleared
+    const msg = result.current.state.messages[1];
+    expect(msg.pendingConfirmation).toBeNull();
+  });
+
+  it("rejectAction calls confirmAction with approved=false", async () => {
+    const { result } = renderHook(() => useChat());
+
+    act(() => {
+      result.current.sendMessage("send an email");
+    });
+
+    act(() => {
+      lastCallbacks!.onConfirmAction({
+        actionId: "uuid-456",
+        toolName: "send_email",
+        arguments: { to: "a@b.com" },
+      });
+      lastCallbacks!.onDone();
+    });
+
+    await act(async () => {
+      result.current.rejectAction("uuid-456");
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    expect(confirmActionCalls).toHaveLength(1);
+    expect(confirmActionCalls[0].approved).toBe(false);
+    expect(result.current.state.status).toBe("idle");
   });
 });

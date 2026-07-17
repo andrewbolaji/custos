@@ -6,7 +6,15 @@ import { WelcomeScreen } from "./components/WelcomeScreen";
 import { useChat } from "./hooks/useChat";
 
 export default function App() {
-  const { state, sendMessage, cancelStream, retry, clearError } = useChat();
+  const {
+    state,
+    sendMessage,
+    cancelStream,
+    retry,
+    clearError,
+    approveAction,
+    rejectAction,
+  } = useChat();
   const hasMessages = state.messages.length > 0;
 
   return (
@@ -14,7 +22,12 @@ export default function App() {
       <DemoBanner />
       <main className="chat-container">
         {hasMessages ? (
-          <MessageList messages={state.messages} status={state.status} />
+          <MessageList
+            messages={state.messages}
+            status={state.status}
+            onApprove={approveAction}
+            onReject={rejectAction}
+          />
         ) : (
           <WelcomeScreen onSuggestedQuestion={sendMessage} />
         )}

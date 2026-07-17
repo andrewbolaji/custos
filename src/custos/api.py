@@ -1,10 +1,11 @@
 """FastAPI service for Custos.
 
 Endpoints:
-    GET  /api/health         Liveness check
-    POST /api/ingest         Trigger corpus indexing (admin action)
-    POST /api/chat           Query the assistant (synchronous)
-    POST /api/chat/stream    Query the assistant (streaming SSE)
+    GET  /api/health             Liveness check
+    POST /api/ingest             Trigger corpus indexing (admin action)
+    POST /api/chat               Query the assistant (synchronous)
+    POST /api/chat/stream        Query the assistant (streaming SSE)
+    POST /api/chat/confirm       Approve or reject a pending side-effectful action
 
 DEMO SIMPLIFICATION: /api/chat and /api/chat/stream take user_permissions in
 the request body. In production, permissions would come from an authenticated
@@ -13,12 +14,9 @@ could claim any permissions. /api/ingest is also unauthenticated here. This is
 a demo. Real auth is a Phase 4 deliverable. The honesty rule requires stating
 this.
 
-IMPORTANT: Both endpoints call the SAME _run_agent() helper, which uses the
-SAME _retrieve_permitted_chunks() for retrieval and the SAME AgentLoop for
-tool orchestration. There is one retrieval path and one agent loop
-implementation. The access-control hard gate holds on every path that touches
-the corpus, including corpus-touching tools (search_documents,
-summarize_section) which route through the permission-filtered retriever.
+The access-control hard gate holds on every path that touches the corpus,
+including corpus-touching tools (search_documents, summarize_section) which
+route through the permission-filtered retriever.
 """
 
 from __future__ import annotations
@@ -40,9 +38,12 @@ from custos.embedder import LocalEmbedder
 from custos.ingest import ingest_corpus
 from custos.interfaces import Chunk
 from custos.llm import ClaudeLLM, get_refusal_text, get_system_prompt
+from custos.pending_actions import PendingActionStore
 from custos.retriever import CustosRetriever
 from custos.tool_registry import ToolRegistry
+from custos.tools.file_ticket import FileTicketTool
 from custos.tools.search_documents import SearchDocumentsTool
+from custos.tools.send_email import SendEmailTool
 from custos.tools.summarize_section import SummarizeSectionTool
 from custos.vector_store import QdrantVectorStore
 
@@ -74,6 +75,7 @@ _embedder: LocalEmbedder | None = None
 _store: QdrantVectorStore | None = None
 _retriever: CustosRetriever | None = None
 _llm: ClaudeLLM | None = None
+_pending_actions = PendingActionStore()
 
 
 def _get_embedder() -> LocalEmbedder:
@@ -132,12 +134,15 @@ def _build_registry(user_permissions: list[str]) -> ToolRegistry:
 
     Corpus-touching tools (search_documents, summarize_section) receive
     the user's permissions and route through the SAME permission-filtered
-    retriever. They are new access-control paths; the T5 gate holds here.
+    retriever. Side-effectful tools (send_email, file_ticket) are always
+    simulated and gated by the PendingAction confirmation flow.
     """
     retriever = _get_retriever()
     registry = ToolRegistry()
     registry.register(SearchDocumentsTool(retriever, user_permissions))
     registry.register(SummarizeSectionTool(retriever, user_permissions))
+    registry.register(SendEmailTool())
+    registry.register(FileTicketTool())
     return registry
 
 
@@ -198,6 +203,21 @@ class ChatResponse(BaseModel):
     answer: str
     citations: list[CitationResponse]
     refused: bool
+
+
+class ConfirmRequest(BaseModel):
+    """Approve or reject a pending side-effectful action."""
+
+    action_id: str
+    session_id: str
+    approved: bool
+
+
+class ConfirmResponse(BaseModel):
+    status: str  # "executed", "rejected", "error"
+    tool_name: str = ""
+    output: str = ""
+    simulated: bool = False
 
 
 class IngestResponse(BaseModel):
@@ -310,7 +330,13 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourc
         loop = AgentLoop(llm=llm, registry=registry)
 
         try:
-            for event in loop.run_streaming(parts, request.query):
+            stream_iter = loop.run_streaming(
+                parts,
+                request.query,
+                session_id=request.session_id,
+                pending_store=_pending_actions,
+            )
+            for event in stream_iter:
                 if event.kind == "text_delta":
                     yield {
                         "event": "token",
@@ -329,6 +355,15 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourc
                         "data": json.dumps({
                             "tool_name": event.data.get("tool_name", ""),
                             "simulated": event.data.get("simulated", False),
+                        }),
+                    }
+                elif event.kind == "confirm_action":
+                    yield {
+                        "event": "confirm_action",
+                        "data": json.dumps({
+                            "tool_name": event.data.get("tool_name", ""),
+                            "action_id": event.data.get("action_id", ""),
+                            "arguments": event.data.get("arguments", {}),
                         }),
                     }
                 elif event.kind == "citations":
@@ -362,3 +397,74 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourc
         yield {"event": "done", "data": "{}"}
 
     return EventSourceResponse(event_generator())
+
+
+@app.post("/api/chat/confirm", response_model=ConfirmResponse)
+def confirm_action(request: ConfirmRequest) -> dict[str, Any]:
+    """Approve or reject a pending side-effectful action.
+
+    Security invariants:
+    - Action ID is unguessable (uuid4). Cannot enumerate others' actions.
+    - Session binding: only the session that created the action can confirm.
+    - TTL: expired actions are rejected.
+    - One-shot: each action can only be confirmed/rejected once.
+    """
+    action = _pending_actions.consume(request.action_id)
+    if action is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Action not found, already processed, or expired.",
+        )
+
+    if action.expired:
+        raise HTTPException(
+            status_code=410,
+            detail="Action has expired. Please try again.",
+        )
+
+    if action.session_id != request.session_id:
+        logger.warning(
+            "Session mismatch for action %s: expected %s, got %s",
+            request.action_id,
+            action.session_id,
+            request.session_id,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="Session mismatch. This action belongs to a different session.",
+        )
+
+    # Clean up other expired actions opportunistically
+    _pending_actions.cleanup_expired()
+
+    if not request.approved:
+        return {
+            "status": "rejected",
+            "tool_name": action.tool_name,
+            "output": "Action was rejected by the user.",
+        }
+
+    # Execute the tool (always simulated for now)
+    registry = _build_registry(["general"])
+    tool = registry.get(action.tool_name)
+    if tool is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Tool '{action.tool_name}' not found.",
+        )
+
+    try:
+        result = tool.run(action.arguments)
+    except Exception as e:
+        logger.exception("Tool execution failed during confirm: %s", action.tool_name)
+        raise HTTPException(
+            status_code=500,
+            detail="Tool execution failed. See server logs.",
+        ) from e
+
+    return {
+        "status": "executed",
+        "tool_name": result.tool_name,
+        "output": str(result.output),
+        "simulated": result.simulated,
+    }

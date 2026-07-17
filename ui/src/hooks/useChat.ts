@@ -1,11 +1,12 @@
 /**
  * Chat state machine hook.
  *
- * States: idle, streaming, error.
+ * States: idle, streaming, awaiting_confirmation, error.
  *
  * The "never stuck" invariant:
  * - idle: user can send a message
  * - streaming: user can cancel (which returns to idle)
+ * - awaiting_confirmation: user can approve, reject, or cancel
  * - error: user can retry or send a new message (both return to idle/streaming)
  *
  * There is no reachable state where the user cannot send another message.
@@ -14,8 +15,14 @@
 
 import { useCallback, useMemo, useRef, useState } from "react";
 
-import { streamChat } from "../api";
-import type { ChatState, Citation, Message, ToolUseEvent } from "../types";
+import { confirmAction, streamChat } from "../api";
+import type {
+  ChatState,
+  Citation,
+  Message,
+  PendingConfirmation,
+  ToolUseEvent,
+} from "../types";
 
 const INITIAL_STATE: ChatState = {
   messages: [],
@@ -34,6 +41,8 @@ export interface UseChatReturn {
   cancelStream: () => void;
   retry: () => void;
   clearError: () => void;
+  approveAction: (actionId: string) => void;
+  rejectAction: (actionId: string) => void;
 }
 
 export function useChat(): UseChatReturn {
@@ -58,6 +67,7 @@ export function useChat(): UseChatReturn {
         citations: [],
         refused: false,
         toolUses: [],
+        pendingConfirmation: null,
         timestamp: Date.now(),
       };
 
@@ -71,6 +81,7 @@ export function useChat(): UseChatReturn {
         citations: [],
         refused: false,
         toolUses: [],
+        pendingConfirmation: null,
         timestamp: Date.now(),
       };
 
@@ -107,6 +118,17 @@ export function useChat(): UseChatReturn {
             ),
           }));
         },
+        onConfirmAction(pending: PendingConfirmation) {
+          setState((prev) => ({
+            ...prev,
+            status: "awaiting_confirmation",
+            messages: prev.messages.map((m) =>
+              m.id === assistantId
+                ? { ...m, pendingConfirmation: pending }
+                : m,
+            ),
+          }));
+        },
         onRefused(text: string) {
           setState((prev) => ({
             ...prev,
@@ -127,7 +149,12 @@ export function useChat(): UseChatReturn {
         onDone() {
           setState((prev) => ({
             ...prev,
-            status: prev.status === "error" ? "error" : "idle",
+            status:
+              prev.status === "error"
+                ? "error"
+                : prev.status === "awaiting_confirmation"
+                  ? "awaiting_confirmation"
+                  : "idle",
           }));
         },
       });
@@ -169,5 +196,79 @@ export function useChat(): UseChatReturn {
     }));
   }, []);
 
-  return { state, sessionId, sendMessage, cancelStream, retry, clearError };
+  const approveAction = useCallback(
+    (actionId: string) => {
+      setState((prev) => ({ ...prev, status: "streaming" }));
+      confirmAction(actionId, sessionId, true)
+        .then((result) => {
+          const assistantId = assistantIdRef.current;
+          setState((prev) => ({
+            ...prev,
+            status: "idle",
+            messages: prev.messages.map((m) =>
+              m.id === assistantId
+                ? {
+                    ...m,
+                    content:
+                      m.content +
+                      `\n\n${result.output}` +
+                      (result.simulated ? " (simulated)" : ""),
+                    pendingConfirmation: null,
+                  }
+                : m,
+            ),
+          }));
+        })
+        .catch(() => {
+          setState((prev) => ({
+            ...prev,
+            status: "error",
+            errorMessage: "Failed to confirm action.",
+          }));
+        });
+    },
+    [sessionId],
+  );
+
+  const rejectAction = useCallback((actionId: string) => {
+    const assistantId = assistantIdRef.current;
+    confirmAction(actionId, sessionId, false)
+      .then(() => {
+        setState((prev) => ({
+          ...prev,
+          status: "idle",
+          messages: prev.messages.map((m) =>
+            m.id === assistantId
+              ? {
+                  ...m,
+                  content: m.content + "\n\nAction was rejected.",
+                  pendingConfirmation: null,
+                }
+              : m,
+          ),
+        }));
+      })
+      .catch(() => {
+        setState((prev) => ({
+          ...prev,
+          status: "idle",
+          messages: prev.messages.map((m) =>
+            m.id === assistantId
+              ? { ...m, pendingConfirmation: null }
+              : m,
+          ),
+        }));
+      });
+  }, [sessionId]);
+
+  return {
+    state,
+    sessionId,
+    sendMessage,
+    cancelStream,
+    retry,
+    clearError,
+    approveAction,
+    rejectAction,
+  };
 }

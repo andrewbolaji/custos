@@ -48,7 +48,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "evals/suites/*.py" = ["TCH001"]  # EvalResult needed at runtime, not just type checking
 "src/custos/ingest.py" = ["TCH001"]  # Chunk and Embedder used at runtime
-"src/custos/agent_loop.py" = ["TCH001", "TCH003"]  # ToolRegistry, Generator used at runtime
+"src/custos/agent_loop.py" = ["TCH001", "TCH003"]  # ToolRegistry, PendingActionStore, Generator used at runtime
 "src/custos/api.py" = ["TCH001", "TCH003"]  # Chunk, AsyncGenerator used at runtime
 "src/custos/tool_registry.py" = ["TCH001"]  # Tool used at runtime
 "src/custos/vector_store.py" = ["TCH003"]  # uuid used at runtime in _stable_id
