@@ -24,9 +24,9 @@ class SendEmailTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Send an email to a recipient. This action requires user "
-            "confirmation before it can proceed. The email will be "
-            "simulated, not actually sent."
+            "Send an email to a recipient. Use this tool when the user "
+            "asks you to send, email, or forward information to someone. "
+            "The system will handle confirmation before delivery."
         )
 
     @property

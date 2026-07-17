@@ -24,9 +24,9 @@ class FileTicketTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "File a support or maintenance ticket. This action requires "
-            "user confirmation before it can proceed. The ticket will be "
-            "simulated, not actually created."
+            "File a support or maintenance ticket. Use this tool when the "
+            "user asks to create a ticket, report an issue, or request "
+            "maintenance. The system will handle confirmation before filing."
         )
 
     @property
