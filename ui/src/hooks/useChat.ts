@@ -12,7 +12,7 @@
  * Every terminal transition returns to idle.
  */
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 import { streamChat } from "../api";
 import type { ChatState, Citation, Message, ToolUseEvent } from "../types";
@@ -29,6 +29,7 @@ function makeId(): string {
 
 export interface UseChatReturn {
   state: ChatState;
+  sessionId: string;
   sendMessage: (query: string, permissions?: string[]) => void;
   cancelStream: () => void;
   retry: () => void;
@@ -42,6 +43,8 @@ export function useChat(): UseChatReturn {
     null,
   );
   const assistantIdRef = useRef<string>("");
+  // Stable session ID: generated once per hook mount (per browser session)
+  const sessionId = useMemo(() => makeId(), []);
 
   const sendMessage = useCallback(
     (query: string, permissions: string[] = ["general"]) => {
@@ -77,7 +80,7 @@ export function useChat(): UseChatReturn {
         errorMessage: null,
       }));
 
-      const controller = streamChat(query, permissions, {
+      const controller = streamChat(query, permissions, sessionId, {
         onToken(text: string) {
           setState((prev) => ({
             ...prev,
@@ -166,5 +169,5 @@ export function useChat(): UseChatReturn {
     }));
   }, []);
 
-  return { state, sendMessage, cancelStream, retry, clearError };
+  return { state, sessionId, sendMessage, cancelStream, retry, clearError };
 }

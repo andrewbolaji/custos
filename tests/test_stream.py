@@ -38,27 +38,47 @@ class TestStreamEndpointValidation:
 
 
 class TestStreamAccessControlSharedPath:
-    """Both endpoints must use the SAME _run_agent() helper.
+    """Both endpoints must use the same retrieval path and AgentLoop.
 
-    This is verified structurally: both endpoints call _run_agent(),
-    which calls _retrieve_permitted_chunks() and AgentLoop.run().
-    There is one retrieval path and one agent loop implementation.
+    /api/chat uses _run_agent() (which calls AgentLoop.run()).
+    /api/chat/stream uses AgentLoop.run_streaming() directly for
+    real token-level streaming. Both share _retrieve_permitted_chunks.
     """
 
-    def test_both_endpoints_use_run_agent(self) -> None:
-        """Verify both endpoints call the same _run_agent helper."""
+    def test_chat_uses_run_agent(self) -> None:
+        """Verify /api/chat calls _run_agent."""
         import inspect
 
         from custos import api
 
         chat_source = inspect.getsource(api.chat)
-        stream_source = inspect.getsource(api.chat_stream)
-
         assert "_run_agent" in chat_source, (
             "/api/chat does not use _run_agent"
         )
-        assert "_run_agent" in stream_source, (
-            "/api/chat/stream does not use _run_agent"
+
+    def test_stream_uses_shared_retrieval(self) -> None:
+        """Verify /api/chat/stream routes through _retrieve_permitted_chunks."""
+        import inspect
+
+        from custos import api
+
+        stream_source = inspect.getsource(api.chat_stream)
+        assert "_retrieve_permitted_chunks" in stream_source, (
+            "/api/chat/stream does not use _retrieve_permitted_chunks"
+        )
+
+    def test_stream_uses_agent_loop(self) -> None:
+        """Verify /api/chat/stream uses AgentLoop for tool orchestration."""
+        import inspect
+
+        from custos import api
+
+        stream_source = inspect.getsource(api.chat_stream)
+        assert "AgentLoop" in stream_source, (
+            "/api/chat/stream does not use AgentLoop"
+        )
+        assert "run_streaming" in stream_source, (
+            "/api/chat/stream does not use run_streaming"
         )
 
     def test_run_agent_uses_shared_retrieval(self) -> None:

@@ -32,12 +32,13 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Generator
 from dataclasses import dataclass, field
 from typing import Any
 
 import anthropic
 
-from custos.interfaces import Chunk, Citation, ToolCall, ToolResult
+from custos.interfaces import Citation, ToolCall, ToolResult
 from custos.llm import ClaudeLLM, PromptParts
 from custos.tool_registry import ToolRegistry
 
@@ -131,8 +132,8 @@ class AgentLoop:
                 max_tokens=self._llm.max_tokens,
                 temperature=self._llm.temperature,
                 system=prompt_parts.system,
-                messages=messages,
-                tools=tools if tools else anthropic.NOT_GIVEN,
+                messages=messages,  # type: ignore[arg-type]
+                tools=tools if tools else anthropic.NOT_GIVEN,  # type: ignore[arg-type]
             )
 
             # Process the response content blocks
@@ -230,7 +231,6 @@ class AgentLoop:
                         output=f"Error: tool '{call.tool_name}' failed.",
                     )
 
-                simulated_label = " (simulated)" if result.simulated else ""
                 events.append(AgentEvent(
                     kind="tool_result",
                     data={
@@ -273,6 +273,182 @@ class AgentLoop:
             events=events,
             tool_results=tool_results,
         )
+
+    def run_streaming(
+        self,
+        prompt_parts: PromptParts,
+        user_query: str,
+    ) -> Generator[AgentEvent, None, None]:
+        """Execute the agent loop, streaming text deltas from the final turn.
+
+        Yields AgentEvent objects:
+        - "text_delta": a token from the final answer (streamed in real time)
+        - "tool_use" / "tool_result": tool activity (emitted before streaming)
+        - "citations": resolved citations (emitted after the final text)
+        - "refused": if the answer is a refusal
+        - "limit_hit": if bounds are exceeded
+
+        Each turn uses messages.stream() so we get real-time text deltas.
+        After the stream completes, we check the final message for tool_use
+        blocks. If present, we process tools and loop. If absent, the text
+        has already been streamed -- we just resolve citations.
+
+        The sync run() method is unchanged. This is additive, not a fork.
+        """
+        tool_results: list[ToolResult] = []
+        messages: list[dict[str, Any]] = [
+            {"role": "user", "content": user_query},
+        ]
+        tools = self._registry.to_claude_tools()
+        start_time = time.monotonic()
+
+        for step in range(self._max_steps):
+            elapsed = time.monotonic() - start_time
+            if elapsed >= self._timeout_seconds:
+                yield AgentEvent(
+                    kind="limit_hit",
+                    data={"reason": "timeout", "elapsed": elapsed},
+                )
+                logger.warning(
+                    "Agent loop timeout after %.1fs at step %d", elapsed, step
+                )
+                return
+
+            # Stream this turn
+            streamed_text_parts: list[str] = []
+            with self._llm.client.messages.stream(
+                model=self._llm.model,
+                max_tokens=self._llm.max_tokens,
+                temperature=self._llm.temperature,
+                system=prompt_parts.system,
+                messages=messages,  # type: ignore[arg-type]
+                tools=tools if tools else anthropic.NOT_GIVEN,  # type: ignore[arg-type]
+            ) as stream:
+                for event in stream:
+                    if (
+                        event.type == "content_block_delta"
+                        and hasattr(event.delta, "text")
+                    ):
+                        streamed_text_parts.append(event.delta.text)
+                        yield AgentEvent(
+                            kind="text_delta",
+                            data={"text": event.delta.text},
+                        )
+
+                final_message = stream.get_final_message()
+
+            # Check if the model used tools
+            tool_use_blocks: list[dict[str, Any]] = []
+            for block in final_message.content:
+                if block.type == "tool_use":
+                    tool_use_blocks.append({
+                        "id": block.id,
+                        "name": block.name,
+                        "input": block.input,
+                    })
+
+            if not tool_use_blocks:
+                # Final answer -- text was already streamed. Resolve citations.
+                full_text = "".join(streamed_text_parts)
+                answer = ClaudeLLM.resolve_response(
+                    full_text, prompt_parts.chunk_lookup
+                )
+                if answer.citations:
+                    yield AgentEvent(
+                        kind="citations",
+                        data={"citations": answer.citations},
+                    )
+                if answer.refused:
+                    yield AgentEvent(kind="refused", data={"text": answer.text})
+                return
+
+            # Tool-use turn -- process tools (text from this turn is
+            # internal thinking, not the final answer)
+            messages.append({"role": "assistant", "content": final_message.content})
+            tool_result_contents: list[dict[str, Any]] = []
+
+            for tu in tool_use_blocks:
+                tool = self._registry.get(tu["name"])
+                if tool is None:
+                    logger.warning("Model requested unknown tool: %s", tu["name"])
+                    tool_result_contents.append({
+                        "type": "tool_result",
+                        "tool_use_id": tu["id"],
+                        "content": _wrap_tool_output(
+                            f"Error: unknown tool '{tu['name']}'."
+                        ),
+                    })
+                    continue
+
+                call = ToolCall(
+                    tool_name=tu["name"],
+                    arguments=tu["input"],
+                    side_effectful=tool.side_effectful,
+                )
+
+                if tool.side_effectful:
+                    yield AgentEvent(
+                        kind="needs_confirmation",
+                        data={
+                            "tool_name": call.tool_name,
+                            "side_effectful": True,
+                        },
+                    )
+                    logger.info(
+                        "Side-effectful tool blocked pending confirmation: %s",
+                        call.tool_name,
+                    )
+                    tool_result_contents.append({
+                        "type": "tool_result",
+                        "tool_use_id": tu["id"],
+                        "content": _wrap_tool_output(
+                            f"Action '{call.tool_name}' requires user confirmation "
+                            f"before execution. The action has NOT been performed. "
+                            f"Tell the user you need their approval to proceed."
+                        ),
+                    })
+                    continue
+
+                yield AgentEvent(
+                    kind="tool_use",
+                    data={"tool_name": call.tool_name},
+                )
+
+                try:
+                    result = tool.run(call.arguments)
+                except Exception:
+                    logger.exception("Tool execution failed: %s", call.tool_name)
+                    result = ToolResult(
+                        tool_name=call.tool_name,
+                        output=f"Error: tool '{call.tool_name}' failed.",
+                    )
+
+                yield AgentEvent(
+                    kind="tool_result",
+                    data={
+                        "tool_name": result.tool_name,
+                        "simulated": result.simulated,
+                    },
+                )
+                tool_results.append(result)
+
+                output_str = str(result.output)
+                if result.simulated:
+                    output_str += "\n(simulated)"
+                tool_result_contents.append({
+                    "type": "tool_result",
+                    "tool_use_id": tu["id"],
+                    "content": _wrap_tool_output(output_str),
+                })
+
+            messages.append({"role": "user", "content": tool_result_contents})
+
+        else:
+            yield AgentEvent(
+                kind="limit_hit",
+                data={"reason": "max_steps", "steps": self._max_steps},
+            )
+            logger.warning("Agent loop hit max steps: %d", self._max_steps)
 
     @property
     def max_steps(self) -> int:

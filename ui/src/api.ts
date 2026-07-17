@@ -22,6 +22,7 @@ export interface StreamCallbacks {
 export function streamChat(
   query: string,
   userPermissions: string[],
+  sessionId: string,
   callbacks: StreamCallbacks,
 ): AbortController {
   const controller = new AbortController();
@@ -29,6 +30,7 @@ export function streamChat(
   const body = JSON.stringify({
     query,
     user_permissions: userPermissions,
+    session_id: sessionId,
   });
 
   fetch(`${API_BASE}/api/chat/stream`, {

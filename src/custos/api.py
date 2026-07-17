@@ -182,6 +182,7 @@ class ChatRequest(BaseModel):
 
     query: str
     user_permissions: list[str] = ["general"]
+    session_id: str = ""
 
 
 class CitationResponse(BaseModel):
@@ -270,7 +271,9 @@ def chat(request: ChatRequest) -> dict[str, Any]:
 async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourceResponse:
     """Query the assistant (streaming SSE).
 
-    Uses the SAME _run_agent() as /api/chat. One agent loop, both endpoints.
+    Uses AgentLoop.run_streaming() for real token-level streaming.
+    Each text delta is emitted as an SSE token event as it arrives
+    from Claude, giving fast time-to-first-token.
 
     SSE events:
         event: token      data: {"text": "..."}
@@ -291,55 +294,69 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourc
         ) from e
 
     async def event_generator() -> AsyncGenerator[dict[str, str], None]:
+        llm = _get_llm()
+        chunks = _retrieve_permitted_chunks(request.query, request.user_permissions)
+
+        if not chunks:
+            yield {
+                "event": "refused",
+                "data": json.dumps({"text": get_refusal_text()}),
+            }
+            yield {"event": "done", "data": "{}"}
+            return
+
+        parts = ClaudeLLM.build_prompt(get_system_prompt(), chunks)
+        registry = _build_registry(request.user_permissions)
+        loop = AgentLoop(llm=llm, registry=registry)
+
         try:
-            result = _run_agent(request.query, request.user_permissions)
+            for event in loop.run_streaming(parts, request.query):
+                if event.kind == "text_delta":
+                    yield {
+                        "event": "token",
+                        "data": json.dumps({"text": event.data.get("text", "")}),
+                    }
+                elif event.kind == "tool_use":
+                    yield {
+                        "event": "tool_use",
+                        "data": json.dumps({
+                            "tool_name": event.data.get("tool_name", ""),
+                        }),
+                    }
+                elif event.kind == "tool_result":
+                    yield {
+                        "event": "tool_use",
+                        "data": json.dumps({
+                            "tool_name": event.data.get("tool_name", ""),
+                            "simulated": event.data.get("simulated", False),
+                        }),
+                    }
+                elif event.kind == "citations":
+                    yield {
+                        "event": "citations",
+                        "data": json.dumps({
+                            "citations": [
+                                asdict(c) for c in event.data.get("citations", [])
+                            ],
+                        }),
+                    }
+                elif event.kind == "refused":
+                    yield {
+                        "event": "refused",
+                        "data": json.dumps({"text": event.data.get("text", "")}),
+                    }
+                elif event.kind == "limit_hit":
+                    yield {
+                        "event": "error",
+                        "data": json.dumps({
+                            "detail": "Request exceeded processing limits.",
+                        }),
+                    }
         except Exception:
             logger.exception("Agent loop failed")
             yield {
                 "event": "error",
                 "data": json.dumps({"detail": "Chat request failed. See server logs."}),
-            }
-            yield {"event": "done", "data": "{}"}
-            return
-
-        # Emit tool-use events (labels only, no raw args/outputs)
-        for event in result.events:
-            if event.kind == "tool_use":
-                yield {
-                    "event": "tool_use",
-                    "data": json.dumps({
-                        "tool_name": event.data.get("tool_name", ""),
-                    }),
-                }
-            elif event.kind == "tool_result":
-                yield {
-                    "event": "tool_use",
-                    "data": json.dumps({
-                        "tool_name": event.data.get("tool_name", ""),
-                        "simulated": event.data.get("simulated", False),
-                    }),
-                }
-
-        if result.refused:
-            yield {
-                "event": "refused",
-                "data": json.dumps({"text": result.text}),
-            }
-        else:
-            # Stream the text as a single token event (the agent loop
-            # runs synchronously; true token-level streaming is added
-            # in Agent Block 2 when the loop gains a streaming mode)
-            yield {
-                "event": "token",
-                "data": json.dumps({"text": result.text}),
-            }
-
-        if result.citations:
-            yield {
-                "event": "citations",
-                "data": json.dumps({
-                    "citations": [asdict(c) for c in result.citations],
-                }),
             }
 
         yield {"event": "done", "data": "{}"}

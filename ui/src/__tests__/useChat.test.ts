@@ -22,6 +22,7 @@ vi.mock("../api", () => ({
   streamChat: (
     _query: string,
     _perms: string[],
+    _sessionId: string,
     callbacks: StreamCallbacks,
   ) => {
     lastCallbacks = callbacks;

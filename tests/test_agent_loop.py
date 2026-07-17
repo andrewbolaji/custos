@@ -10,8 +10,6 @@ from dataclasses import dataclass
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from custos.agent_loop import AgentLoop, _wrap_tool_output
 from custos.interfaces import Chunk, Tool, ToolResult
 from custos.llm import ClaudeLLM, PromptParts
@@ -273,7 +271,6 @@ class TestAgentLoopBounds:
         # Simulate time passing past timeout
         import custos.agent_loop as al
 
-        original_monotonic = al.time.monotonic
         call_count = 0
 
         def fake_monotonic() -> float:
