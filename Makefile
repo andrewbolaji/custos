@@ -26,7 +26,7 @@ lint:
 	$(PYTHON) -m ruff check src/ tests/ evals/ corpus/
 
 typecheck:
-	$(PYTHON) -m mypy src/
+	$(PYTHON) -m mypy src/ corpus/ evals/
 
 test:
 	$(PYTHON) -m pytest -v

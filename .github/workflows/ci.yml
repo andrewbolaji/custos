@@ -24,7 +24,7 @@ jobs:
         run: python -m ruff check src/ tests/ evals/ corpus/
 
       - name: Type check
-        run: python -m mypy src/
+        run: python -m mypy src/ corpus/ evals/
 
       - name: Generate corpus
         run: python corpus/generate.py

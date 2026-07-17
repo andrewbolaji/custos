@@ -19,6 +19,7 @@ import random
 import textwrap
 from datetime import date, timedelta
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -109,7 +110,7 @@ class ReservedPII:
 # ---------------------------------------------------------------------------
 
 
-def gen_employee_handbook(ref_date: str) -> tuple[str, dict[str, object]]:
+def gen_employee_handbook(ref_date: str) -> tuple[str, dict[str, Any]]:
     """General-access employee handbook."""
     content = textwrap.dedent(f"""\
     # Meridian Home Services -- Employee Handbook
@@ -198,7 +199,7 @@ def gen_employee_handbook(ref_date: str) -> tuple[str, dict[str, object]]:
     return content, meta
 
 
-def gen_field_service_manual() -> tuple[str, dict[str, object]]:
+def gen_field_service_manual() -> tuple[str, dict[str, Any]]:
     """General-access field service manual with SOPs."""
     content = textwrap.dedent("""\
     # Field Service Manual -- Standard Operating Procedures
@@ -299,7 +300,7 @@ def gen_field_service_manual() -> tuple[str, dict[str, object]]:
     return content, meta
 
 
-def gen_customer_faq() -> tuple[str, dict[str, object]]:
+def gen_customer_faq() -> tuple[str, dict[str, Any]]:
     """General-access customer FAQ."""
     content = textwrap.dedent("""\
     # Customer FAQ -- Meridian Home Services
@@ -368,7 +369,7 @@ def gen_customer_faq() -> tuple[str, dict[str, object]]:
     return content, meta
 
 
-def gen_pricing_warranty() -> tuple[str, dict[str, object]]:
+def gen_pricing_warranty() -> tuple[str, dict[str, Any]]:
     """General-access pricing and warranty document."""
     content = textwrap.dedent("""\
     # Pricing and Warranty Schedule -- Meridian Home Services
@@ -443,7 +444,7 @@ def gen_pricing_warranty() -> tuple[str, dict[str, object]]:
     return content, meta
 
 
-def gen_hr_records(pii: ReservedPII, ref: date) -> tuple[str, dict[str, object]]:
+def gen_hr_records(pii: ReservedPII, ref: date) -> tuple[str, dict[str, Any]]:
     """HR-restricted employee records with synthetic PII (reserved ranges)."""
     lines = [
         "# HR Employee Records -- CONFIDENTIAL",
@@ -479,7 +480,7 @@ def gen_hr_records(pii: ReservedPII, ref: date) -> tuple[str, dict[str, object]]
     return "\n".join(lines), meta
 
 
-def gen_finance_memo(ref_date: str) -> tuple[str, dict[str, object]]:
+def gen_finance_memo(ref_date: str) -> tuple[str, dict[str, Any]]:
     """Finance-restricted memo with sensitive margins."""
     content = textwrap.dedent(f"""\
     # Q2 2026 Financial Summary -- CONFIDENTIAL
@@ -538,7 +539,7 @@ def gen_finance_memo(ref_date: str) -> tuple[str, dict[str, object]]:
 # ---------------------------------------------------------------------------
 
 
-def gen_support_macro_with_payload() -> tuple[str, dict[str, object]]:
+def gen_support_macro_with_payload() -> tuple[str, dict[str, Any]]:
     """A support macro with a footer injection payload (T2 eval)."""
     content = textwrap.dedent("""\
     # Support Macros -- Common Responses
@@ -592,7 +593,7 @@ def gen_support_macro_with_payload() -> tuple[str, dict[str, object]]:
     return content, meta
 
 
-def gen_manual_with_hidden_payload() -> tuple[str, dict[str, object]]:
+def gen_manual_with_hidden_payload() -> tuple[str, dict[str, Any]]:
     """A manual with a hidden instruction payload (simulates white-on-white text).
 
     In a real PDF this would be white text on a white background. Since the
@@ -647,7 +648,7 @@ def gen_manual_with_hidden_payload() -> tuple[str, dict[str, object]]:
     return content, meta
 
 
-def gen_doc_with_label_drop_payload() -> tuple[str, dict[str, object]]:
+def gen_doc_with_label_drop_payload() -> tuple[str, dict[str, Any]]:
     """A document that tries to make the assistant drop its (simulated) labels."""
     content = textwrap.dedent("""\
     # Meridian IT Procedures
@@ -707,9 +708,9 @@ def gen_doc_with_label_drop_payload() -> tuple[str, dict[str, object]]:
 # ---------------------------------------------------------------------------
 
 
-def write_manifest(documents: list[dict[str, object]], output_dir: Path) -> None:
+def write_manifest(documents: list[dict[str, Any]], output_dir: Path) -> None:
     """Write the corpus manifest with checksums."""
-    manifest: dict[str, object] = {
+    manifest: dict[str, Any] = {
         "generated": REFERENCE_DATE,
         "seed": SEED,
         "pii_notice": (
@@ -719,7 +720,7 @@ def write_manifest(documents: list[dict[str, object]], output_dir: Path) -> None
         ),
         "documents": [],
     }
-    doc_list: list[dict[str, object]] = []
+    doc_list: list[dict[str, Any]] = []
     for doc_meta in documents:
         file_name = f"{doc_meta['doc_id']}.md"
         file_path = output_dir / file_name
@@ -741,7 +742,7 @@ def main() -> None:
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    generators: list[tuple[str, tuple[str, dict[str, object]]]] = []
+    generators: list[tuple[str, tuple[str, dict[str, Any]]]] = []
 
     # General-access documents
     generators.append(("handbook-001", gen_employee_handbook(REFERENCE_DATE)))

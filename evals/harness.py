@@ -4,6 +4,10 @@ Runs all eval suites and prints a pass/fail summary table. Each suite is a
 module in evals/suites/ that exposes a run() function returning a list of
 EvalResult objects.
 
+A suite that returns no results is NOT IMPLEMENTED, not passing. The harness
+reports overall status as NOT PROVEN until every registered suite produces
+real results. An empty run can never masquerade as a green security posture.
+
 Usage:
     python -m evals.harness
     make evals
@@ -27,6 +31,13 @@ class EvalResult:
     score: float | str
     detail: str = ""
 
+
+# Hard-gate suites: these protect security invariants and must never
+# silently pass as "no results." They are NOT PROVEN until real evals exist.
+HARD_GATE_SUITES = {
+    "evals.suites.access_control",
+    "evals.suites.action_gating",
+}
 
 # Registry of eval suite modules (added as suites are implemented)
 SUITE_MODULES = [
@@ -60,38 +71,54 @@ def run_suite(module_name: str) -> list[EvalResult]:
     return []
 
 
-def print_table(results: list[EvalResult]) -> None:
-    """Print a formatted results table."""
-    if not results:
-        print("\n  No eval results. Suites will produce results as components are implemented.\n")
-        return
+def print_table(results: list[EvalResult], not_implemented: list[str]) -> None:
+    """Print a formatted results table including NOT IMPLEMENTED suites."""
+    all_rows: list[tuple[str, str, str, str, str]] = []
 
-    # Column widths
-    suite_w = max(len(r.suite) for r in results)
-    case_w = max(len(r.case_name) for r in results)
-    metric_w = max(len(r.metric) for r in results)
-
-    header = (
-        f"  {'Suite':<{suite_w}}  {'Case':<{case_w}}  "
-        f"{'Metric':<{metric_w}}  {'Score':>8}  Result"
-    )
-    sep = "  " + "-" * (len(header) - 2)
-
-    print(f"\n{header}")
-    print(sep)
+    # Real results
     for r in results:
         status = "PASS" if r.passed else "FAIL"
         score_str = f"{r.score}" if isinstance(r.score, str) else f"{r.score:.3f}"
+        all_rows.append((r.suite, r.case_name, r.metric, score_str, status))
+
+    # NOT IMPLEMENTED suites
+    for suite_name in not_implemented:
+        short_name = suite_name.rsplit(".", 1)[-1]
+        is_hard = suite_name in HARD_GATE_SUITES
+        label = "NOT IMPLEMENTED (hard gate)" if is_hard else "NOT IMPLEMENTED"
+        all_rows.append((short_name, "(none)", "(none)", "n/a", label))
+
+    if not all_rows:
+        print("\n  No eval suites registered.\n")
+        return
+
+    # Column widths
+    suite_w = max(len(r[0]) for r in all_rows)
+    case_w = max(len(r[1]) for r in all_rows)
+    metric_w = max(len(r[2]) for r in all_rows)
+    score_w = max(len(r[3]) for r in all_rows)
+    status_w = max(len(r[4]) for r in all_rows)
+
+    header = (
+        f"  {'Suite':<{suite_w}}  {'Case':<{case_w}}  "
+        f"{'Metric':<{metric_w}}  {'Score':>{score_w}}  Result"
+    )
+    sep = "  " + "-" * (suite_w + case_w + metric_w + score_w + status_w + 12)
+
+    print(f"\n{header}")
+    print(sep)
+    for suite, case, metric, score, status in all_rows:
         print(
-            f"  {r.suite:<{suite_w}}  {r.case_name:<{case_w}}  "
-            f"{r.metric:<{metric_w}}  {score_str:>8}  {status}"
+            f"  {suite:<{suite_w}}  {case:<{case_w}}  "
+            f"{metric:<{metric_w}}  {score:>{score_w}}  {status}"
         )
     print(sep)
 
-    total = len(results)
+    real_total = len(results)
     passed = sum(1 for r in results if r.passed)
-    failed = total - passed
-    print(f"  Total: {total}  Passed: {passed}  Failed: {failed}\n")
+    failed = real_total - passed
+    not_impl = len(not_implemented)
+    print(f"  Proven: {passed}  Failed: {failed}  Not implemented: {not_impl}\n")
 
 
 def main() -> int:
@@ -100,26 +127,45 @@ def main() -> int:
     print("=" * 40)
 
     suites = discover_suites()
-    if not suites:
-        print("\n  No eval suites available yet.")
-        print("  Suites will be implemented alongside their corresponding components.\n")
-        return 0
 
     all_results: list[EvalResult] = []
+    not_implemented: list[str] = []
+
     for suite_name in suites:
-        print(f"\n  Running: {suite_name}")
         results = run_suite(suite_name)
-        all_results.extend(results)
+        if results:
+            print(f"  Running: {suite_name} ({len(results)} cases)")
+            all_results.extend(results)
+        else:
+            not_implemented.append(suite_name)
 
-    print_table(all_results)
+    print_table(all_results, not_implemented)
 
-    # Hard gates: any failure returns nonzero
+    # Determine overall status
     failures = [r for r in all_results if not r.passed]
+    hard_gate_missing = [s for s in not_implemented if s in HARD_GATE_SUITES]
+
     if failures:
         print("  HARD GATE FAILURES:")
         for f in failures:
             print(f"    {f.suite}/{f.case_name}: {f.detail}")
+
+    if hard_gate_missing:
+        print("  HARD GATE SUITES NOT IMPLEMENTED:")
+        for s in hard_gate_missing:
+            print(f"    {s}")
+
+    if not_implemented:
+        print(
+            f"\n  Overall: NOT PROVEN ({len(not_implemented)} suite(s) not implemented)"
+        )
+        print("  A control without a passing eval is not proven.\n")
+        return 0  # not a CI failure, but visibly not proven
+
+    if failures:
         return 1
+
+    print("\n  Overall: ALL PROVEN\n")
     return 0
 
 
