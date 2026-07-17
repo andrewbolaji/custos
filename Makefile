@@ -48,7 +48,7 @@ index:
 	$(PYTHON) -m custos.ingest
 
 serve:
-	$(PYTHON) -m uvicorn custos.api:app --reload --port 8000
+	$(PYTHON) -m uvicorn custos.api:app --reload --host 127.0.0.1 --port 8000
 
 ui:
 	cd ui && npm run dev

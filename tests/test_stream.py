@@ -3,26 +3,51 @@
 Verifies event structure, access-control gate on the streaming path,
 and error handling. These tests do NOT require Claude API or Qdrant
 (they test request validation and the shared retrieval path).
+
+Tests that POST to /api/chat/stream explicitly clear ANTHROPIC_API_KEY
+and the cached _llm singleton so they always hit the 503 fast-exit path
+in _get_llm(). Without this, load_dotenv() makes the key available,
+the endpoint enters the SSE generator, and sse_starlette's global
+AppStatus.should_exit_event poisons subsequent tests (it binds to the
+first test's event loop, then throws RuntimeError on the next one).
 """
 
 from __future__ import annotations
 
+import os
+from unittest.mock import patch
+
+import pytest
 from fastapi.testclient import TestClient
 
+import custos.api
 from custos.api import app
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _clear_llm_cache() -> None:
+    """Reset the cached LLM singleton and hide the API key.
+
+    This ensures every test in this module gets a clean _llm=None,
+    and tests that POST to the streaming endpoint hit the 503 path
+    deterministically, regardless of what .env provides.
+    """
+    custos.api._llm = None
 
 
 class TestStreamEndpointValidation:
     """The streaming endpoint must exist and validate requests."""
 
     def test_stream_endpoint_exists(self) -> None:
-        response = client.post(
-            "/api/chat/stream",
-            json={"query": "test", "user_permissions": ["general"]},
-        )
-        # Not a 404 or 405; may be 500/503 (no Qdrant/API key)
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ANTHROPIC_API_KEY", None)
+            response = client.post(
+                "/api/chat/stream",
+                json={"query": "test", "user_permissions": ["general"]},
+            )
+        # 503: no API key. Not a 404 or 405 (endpoint exists).
         assert response.status_code not in (404, 405, 422)
 
     def test_stream_requires_query(self) -> None:
@@ -30,10 +55,12 @@ class TestStreamEndpointValidation:
         assert response.status_code == 422
 
     def test_stream_default_permissions(self) -> None:
-        response = client.post(
-            "/api/chat/stream",
-            json={"query": "test"},
-        )
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ANTHROPIC_API_KEY", None)
+            response = client.post(
+                "/api/chat/stream",
+                json={"query": "test"},
+            )
         assert response.status_code != 422
 
 

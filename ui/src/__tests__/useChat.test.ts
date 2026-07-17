@@ -105,7 +105,7 @@ describe("useChat: never-stuck invariant", () => {
     expect(result.current.state.status).toBe("idle");
   });
 
-  it("returns to idle after cancel", () => {
+  it("returns to idle after cancel with no stale messages", () => {
     const { result } = renderHook(() => useChat());
 
     act(() => {
@@ -113,12 +113,40 @@ describe("useChat: never-stuck invariant", () => {
     });
 
     expect(result.current.state.status).toBe("streaming");
+    expect(result.current.state.messages).toHaveLength(2);
 
     act(() => {
       result.current.cancelStream();
     });
 
     expect(result.current.state.status).toBe("idle");
+    // Cancel removes the in-flight user + assistant pair
+    expect(result.current.state.messages).toHaveLength(0);
+  });
+
+  it("cancel does not resurface a stale query on next send", () => {
+    const { result } = renderHook(() => useChat());
+
+    // Send first question, then cancel
+    act(() => {
+      result.current.sendMessage("who won");
+    });
+    act(() => {
+      result.current.cancelStream();
+    });
+
+    expect(result.current.state.status).toBe("idle");
+    expect(result.current.state.messages).toHaveLength(0);
+
+    // Send a new question
+    act(() => {
+      result.current.sendMessage("PTO policy");
+    });
+
+    // Only the new question should appear, not "who won"
+    expect(result.current.state.messages).toHaveLength(2);
+    expect(result.current.state.messages[0].content).toBe("PTO policy");
+    expect(result.current.state.messages[0].role).toBe("user");
   });
 
   it("transitions to error state on error, not stuck", () => {

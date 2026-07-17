@@ -15,6 +15,7 @@ dependencies = [
     "torch>=2.2,<2.3",
     "transformers>=4.45,<4.50",
     "sse-starlette>=2.0,<3",
+    "python-dotenv>=1.0,<2",
     "uvicorn>=0.30,<1",
 ]
 
@@ -47,11 +48,12 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "evals/suites/*.py" = ["TCH001"]  # EvalResult needed at runtime, not just type checking
-"src/custos/ingest.py" = ["TCH001"]  # Chunk and Embedder used at runtime
+"src/custos/ingest.py" = ["TCH001", "E402"]  # Chunk and Embedder used at runtime; E402: load_dotenv before imports
 "src/custos/agent_loop.py" = ["TCH001", "TCH003"]  # ToolRegistry, PendingActionStore, Generator used at runtime
-"src/custos/api.py" = ["TCH001", "TCH003"]  # Chunk, AsyncGenerator used at runtime
+"src/custos/api.py" = ["TCH001", "TCH003", "E402"]  # Chunk, AsyncGenerator used at runtime; E402: load_dotenv before imports
 "src/custos/tool_registry.py" = ["TCH001"]  # Tool used at runtime
 "src/custos/vector_store.py" = ["TCH003"]  # uuid used at runtime in _stable_id
+"evals/harness.py" = ["E402"]  # load_dotenv before imports
 
 [tool.mypy]
 python_version = "3.12"

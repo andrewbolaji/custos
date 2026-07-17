@@ -21,6 +21,10 @@ route through the permission-filtered retriever.
 
 from __future__ import annotations
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import json
 import logging
 import os
@@ -343,6 +347,10 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourc
                         "data": json.dumps({"text": event.data.get("text", "")}),
                     }
                 elif event.kind == "tool_use":
+                    # tool_use fires when a read-only tool starts executing.
+                    # We emit a single SSE event here; the tool_result event
+                    # (which follows) is NOT emitted as a second SSE to avoid
+                    # doubled tool badges in the UI.
                     yield {
                         "event": "tool_use",
                         "data": json.dumps({
@@ -350,13 +358,9 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourc
                         }),
                     }
                 elif event.kind == "tool_result":
-                    yield {
-                        "event": "tool_use",
-                        "data": json.dumps({
-                            "tool_name": event.data.get("tool_name", ""),
-                            "simulated": event.data.get("simulated", False),
-                        }),
-                    }
+                    # Intentionally not emitted as a separate SSE event.
+                    # The tool_use event above already notified the frontend.
+                    pass
                 elif event.kind == "confirm_action":
                     yield {
                         "event": "confirm_action",

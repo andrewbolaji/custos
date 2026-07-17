@@ -3,6 +3,13 @@ import type { Message as MessageType } from "../types";
 import { Citation } from "./Citation";
 import { ConfirmationCard } from "./ConfirmationCard";
 
+const TOOL_LABELS: Record<string, string> = {
+  search_documents: "Searched documents",
+  summarize_section: "Summarized section",
+  send_email: "Send email",
+  file_ticket: "File ticket",
+};
+
 interface MessageProps {
   message: MessageType;
   isStreaming: boolean;
@@ -29,7 +36,7 @@ export function Message({ message, isStreaming, onApprove, onReject }: MessagePr
           <div className="tool-uses">
             {message.toolUses.map((tu, i) => (
               <span key={i} className="tool-use-badge">
-                {tu.tool_name}
+                {TOOL_LABELS[tu.tool_name] ?? tu.tool_name}
                 {tu.simulated && " (simulated)"}
               </span>
             ))}

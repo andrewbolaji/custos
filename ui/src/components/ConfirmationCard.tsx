@@ -24,21 +24,22 @@ export function ConfirmationCard({
   return (
     <div
       style={{
-        border: "1px solid #e5a100",
+        border: "1px solid #b45309",
         borderRadius: "8px",
         padding: "12px 16px",
         margin: "8px 0",
         backgroundColor: "#fffbeb",
+        color: "#1c1917",
       }}
     >
-      <p style={{ margin: "0 0 8px", fontWeight: 600 }}>
+      <p style={{ margin: "0 0 8px", fontWeight: 600, color: "#78350f" }}>
         Action requires your approval
       </p>
-      <p style={{ margin: "0 0 4px" }}>
+      <p style={{ margin: "0 0 4px", color: "#1c1917" }}>
         <strong>{label}</strong> (simulated)
       </p>
       {Object.entries(args).length > 0 && (
-        <ul style={{ margin: "4px 0 12px", paddingLeft: "20px" }}>
+        <ul style={{ margin: "4px 0 12px", paddingLeft: "20px", color: "#292524" }}>
           {Object.entries(args).map(([key, value]) => (
             <li key={key}>
               <strong>{key}:</strong> {String(value)}

@@ -24,6 +24,22 @@ import type {
   ToolUseEvent,
 } from "../types";
 
+/**
+ * Strip LLM citation artifacts from visible text.
+ * Removes ```citations [...] ``` fences and inline [chunk_id] markers
+ * so only clean prose reaches the user. The citations SSE event carries
+ * the structured data for the SOURCES chips.
+ */
+function stripLlmArtifacts(text: string): string {
+  // Remove ```citations ... ``` block (may be partial during streaming)
+  let cleaned = text.replace(/```citations\s*\n[\s\S]*?```/g, "");
+  // Remove partial opening fence at the end (streaming may cut mid-block)
+  cleaned = cleaned.replace(/```citations[\s\S]*$/, "");
+  // Remove inline [chunk_id] markers (chunk IDs contain underscores)
+  cleaned = cleaned.replace(/\s*\[[\w./-]+_[\w./-]+\]/g, "");
+  return cleaned.trimEnd();
+}
+
 const INITIAL_STATE: ChatState = {
   messages: [],
   status: "idle",
@@ -96,7 +112,7 @@ export function useChat(): UseChatReturn {
           setState((prev) => ({
             ...prev,
             messages: prev.messages.map((m) =>
-              m.id === assistantId ? { ...m, content: m.content + text } : m,
+              m.id === assistantId ? { ...m, content: stripLlmArtifacts(m.content + text) } : m,
             ),
           }));
         },
@@ -167,11 +183,21 @@ export function useChat(): UseChatReturn {
   const cancelStream = useCallback(() => {
     controllerRef.current?.abort();
     controllerRef.current = null;
-    // Invariant: cancel always returns to idle
-    setState((prev) => ({
-      ...prev,
-      status: "idle",
-    }));
+    lastQueryRef.current = null;
+    const cancelledAssistantId = assistantIdRef.current;
+    assistantIdRef.current = "";
+    // Remove the in-flight user + assistant message pair so cancel
+    // never leaves a stale query or empty bubble in the history.
+    setState((prev) => {
+      const msgs = prev.messages.filter((m) => {
+        if (m.id === cancelledAssistantId) return false;
+        // Remove the user message that immediately preceded it
+        const idx = prev.messages.findIndex((x) => x.id === cancelledAssistantId);
+        if (idx > 0 && m === prev.messages[idx - 1] && m.role === "user") return false;
+        return true;
+      });
+      return { ...prev, messages: msgs, status: "idle" };
+    });
   }, []);
 
   const retry = useCallback(() => {

@@ -213,7 +213,10 @@ class AgentLoop:
                         "content": _wrap_tool_output(
                             f"Action '{call.tool_name}' requires user confirmation "
                             f"before execution. The action has NOT been performed. "
-                            f"Tell the user you need their approval to proceed."
+                            f"A confirmation card with the full details is shown "
+                            f"to the user. Respond with ONE brief sentence like "
+                            f"'I've drafted that for your review. Approve or "
+                            f"reject below.' Do NOT restate the action details."
                         ),
                     })
                     continue
@@ -426,7 +429,10 @@ class AgentLoop:
                         "content": _wrap_tool_output(
                             f"Action '{call.tool_name}' requires user confirmation "
                             f"before execution. The action has NOT been performed. "
-                            f"Tell the user you need their approval to proceed."
+                            f"A confirmation card with the full details is shown "
+                            f"to the user. Respond with ONE brief sentence like "
+                            f"'I've drafted that for your review. Approve or "
+                            f"reject below.' Do NOT restate the action details."
                         ),
                     })
                     continue
