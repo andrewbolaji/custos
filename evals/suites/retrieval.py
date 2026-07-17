@@ -238,7 +238,14 @@ def _run_llm_evals(retriever: object) -> list[EvalResult]:
             )
         )
 
-    # Groundedness: answerable questions, verify citations resolve
+    # Citation resolution: answerable questions, verify every citation
+    # resolves to a real span in the retrieved set.
+    #
+    # NOTE: This measures citation resolution (did every cited chunk_id
+    # map to a stored span?), not faithfulness (are the answer's claims
+    # actually supported by the cited text?). Faithfulness is a harder
+    # eval that requires claim extraction and entailment checking, and
+    # is deferred. We name this accurately to under-claim, not over-claim.
     answerable = [
         "What is the PTO accrual rate for new employees?",
         "How much does a water heater replacement cost?",
@@ -259,7 +266,7 @@ def _run_llm_evals(retriever: object) -> list[EvalResult]:
         results.append(
             EvalResult(
                 suite="retrieval",
-                case_name=f"grounded: {q[:40]}",
+                case_name=f"citation_resolution: {q[:40]}",
                 passed=all_resolved and has_citations and not answer.refused,
                 metric="citations_resolved",
                 score=1.0 if (all_resolved and has_citations) else 0.0,

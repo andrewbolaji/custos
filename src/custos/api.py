@@ -153,7 +153,9 @@ def ingest() -> dict[str, Any]:
         chunks = ingest_corpus(embedder=embedder, store=store)
     except Exception as e:
         logger.exception("Ingest failed")
-        raise HTTPException(status_code=503, detail=f"Ingest failed: {e}") from e
+        raise HTTPException(
+            status_code=503, detail="Ingest failed. See server logs."
+        ) from e
     return {"status": "ok", "chunks_indexed": len(chunks)}
 
 
@@ -171,7 +173,9 @@ def chat(request: ChatRequest) -> dict[str, Any]:
         raise
     except Exception as e:
         logger.exception("Service initialization failed")
-        raise HTTPException(status_code=503, detail=f"Service unavailable: {e}") from e
+        raise HTTPException(
+            status_code=503, detail="Service unavailable. See server logs."
+        ) from e
 
     try:
         chunks = retriever.retrieve(
@@ -187,7 +191,9 @@ def chat(request: ChatRequest) -> dict[str, Any]:
         )
     except Exception as e:
         logger.exception("Chat request failed")
-        raise HTTPException(status_code=500, detail=f"Chat failed: {e}") from e
+        raise HTTPException(
+            status_code=500, detail="Chat request failed. See server logs."
+        ) from e
 
     return {
         "answer": answer.text,
