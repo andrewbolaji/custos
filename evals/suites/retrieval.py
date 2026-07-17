@@ -172,6 +172,12 @@ def run(llm_evals: bool = False) -> list[EvalResult]:
     )
 
     # --- LLM-free: access-control hard gate ---
+    # NOTE: This tests the retriever directly, which is the single retrieval
+    # path shared by both /api/chat and /api/chat/stream (both call
+    # _retrieve_permitted_chunks -> _get_retriever().retrieve()). Proving
+    # the gate here proves it on every endpoint that touches the corpus.
+    # The structural test in test_stream.py verifies both endpoints call
+    # the same function.
     for case in _ACCESS_CONTROL_CASES:
         ac_query = str(case["query"])
         ac_perms = list(case["user_permissions"])

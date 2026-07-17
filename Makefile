@@ -1,4 +1,4 @@
-.PHONY: up down test evals evals-full corpus lint typecheck check install index serve
+.PHONY: up down test test-ui evals evals-full corpus lint typecheck check install index serve ui
 
 # Use the venv if it exists, otherwise fall back to python3.12 or python3
 PYTHON := $(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; elif command -v python3.12 >/dev/null 2>&1; then echo python3.12; else echo python3; fi)
@@ -10,6 +10,7 @@ PYTHON := $(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; elif c
 install:
 	python3.12 -m venv .venv
 	.venv/bin/pip install -e ".[dev]"
+	cd ui && npm install
 
 up:
 	@command -v docker >/dev/null 2>&1 || { echo "Error: Docker is not installed or not running."; exit 1; }
@@ -31,7 +32,10 @@ typecheck:
 test:
 	$(PYTHON) -m pytest -v
 
-check: lint typecheck test
+test-ui:
+	cd ui && npx vitest run
+
+check: lint typecheck test test-ui
 
 # ---------------------------------------------------------------------------
 # Corpus, ingest, and serve
@@ -45,6 +49,9 @@ index:
 
 serve:
 	$(PYTHON) -m uvicorn custos.api:app --reload --port 8000
+
+ui:
+	cd ui && npm run dev
 
 # ---------------------------------------------------------------------------
 # Evals

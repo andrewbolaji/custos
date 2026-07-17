@@ -1,29 +1,43 @@
 """FastAPI service for Custos.
 
 Endpoints:
-    GET  /api/health    Liveness check
-    POST /api/ingest    Trigger corpus indexing (admin action)
-    POST /api/chat      Query the assistant
+    GET  /api/health         Liveness check
+    POST /api/ingest         Trigger corpus indexing (admin action)
+    POST /api/chat           Query the assistant (synchronous)
+    POST /api/chat/stream    Query the assistant (streaming SSE)
 
-DEMO SIMPLIFICATION: /api/chat takes user_permissions in the request body.
-In production, permissions would come from an authenticated identity (JWT,
-session, IdP), never from the request body, because a client could claim any
-permissions. /api/ingest is also unauthenticated here. This is a demo. Real
-auth is a Phase 4 deliverable. The honesty rule requires stating this.
+DEMO SIMPLIFICATION: /api/chat and /api/chat/stream take user_permissions in
+the request body. In production, permissions would come from an authenticated
+identity (JWT, session, IdP), never from the request body, because a client
+could claim any permissions. /api/ingest is also unauthenticated here. This is
+a demo. Real auth is a Phase 4 deliverable. The honesty rule requires stating
+this.
+
+IMPORTANT: /api/chat/stream reuses the EXACT SAME retriever and permission
+filter as /api/chat. Both endpoints call _retrieve_permitted_chunks(), which
+calls _get_retriever().retrieve() with the user's permissions as a server-side
+Qdrant filter. There is no parallel retrieval path. The access-control hard
+gate holds on every endpoint that touches the corpus.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+from collections.abc import AsyncGenerator
 from dataclasses import asdict
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+import anthropic
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from sse_starlette.sse import EventSourceResponse
 
 from custos.embedder import LocalEmbedder
 from custos.ingest import ingest_corpus
+from custos.interfaces import Chunk
 from custos.llm import ClaudeLLM, get_system_prompt
 from custos.retriever import CustosRetriever
 from custos.vector_store import QdrantVectorStore
@@ -38,6 +52,14 @@ app = FastAPI(
         "In production, permissions come from an authenticated identity."
     ),
     version="0.1.0",
+)
+
+# CORS for local dev (Vite on :5173, API on :8000)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # ---------------------------------------------------------------------------
@@ -88,6 +110,16 @@ def _get_llm() -> ClaudeLLM:
             )
         _llm = ClaudeLLM(api_key=api_key)
     return _llm
+
+
+def _retrieve_permitted_chunks(query: str, user_permissions: list[str]) -> list[Chunk]:
+    """Retrieve chunks using the shared retriever with permission filtering.
+
+    This is the single retrieval path for both /api/chat and /api/chat/stream.
+    The permission filter is applied inside the Qdrant query (server-side).
+    """
+    retriever = _get_retriever()
+    return retriever.retrieve(query=query, user_permissions=user_permissions, k=5)
 
 
 # ---------------------------------------------------------------------------
@@ -161,13 +193,11 @@ def ingest() -> dict[str, Any]:
 
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(request: ChatRequest) -> dict[str, Any]:
-    """Query the assistant.
+    """Query the assistant (synchronous).
 
-    DEMO SIMPLIFICATION: user_permissions comes from the request body.
-    See ChatRequest docstring for the production path.
+    Uses _retrieve_permitted_chunks() for access-controlled retrieval.
     """
     try:
-        retriever = _get_retriever()
         llm = _get_llm()
     except HTTPException:
         raise
@@ -178,12 +208,7 @@ def chat(request: ChatRequest) -> dict[str, Any]:
         ) from e
 
     try:
-        chunks = retriever.retrieve(
-            query=request.query,
-            user_permissions=request.user_permissions,
-            k=5,
-        )
-
+        chunks = _retrieve_permitted_chunks(request.query, request.user_permissions)
         answer = llm.generate(
             system_prompt=get_system_prompt(),
             context_chunks=chunks,
@@ -200,3 +225,101 @@ def chat(request: ChatRequest) -> dict[str, Any]:
         "citations": [asdict(c) for c in answer.citations],
         "refused": answer.refused,
     }
+
+
+@app.post("/api/chat/stream")
+async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourceResponse:
+    """Query the assistant (streaming SSE).
+
+    Uses the EXACT SAME _retrieve_permitted_chunks() as /api/chat.
+    The access-control hard gate holds on this endpoint too.
+
+    SSE events:
+        event: token    data: {"text": "..."}
+        event: citations data: {"citations": [...]}
+        event: done     data: {}
+        event: error    data: {"detail": "..."}
+        event: refused  data: {"text": "I don't have information..."}
+    """
+    try:
+        llm = _get_llm()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Service initialization failed")
+        raise HTTPException(
+            status_code=503, detail="Service unavailable. See server logs."
+        ) from e
+
+    try:
+        chunks = _retrieve_permitted_chunks(request.query, request.user_permissions)
+    except Exception as e:
+        logger.exception("Retrieval failed")
+        raise HTTPException(
+            status_code=500, detail="Retrieval failed. See server logs."
+        ) from e
+
+    async def event_generator() -> AsyncGenerator[dict[str, str], None]:
+        # Empty context: refuse immediately
+        if not chunks:
+            yield {
+                "event": "refused",
+                "data": json.dumps({
+                    "text": "I don't have information about that in the available documents."
+                }),
+            }
+            yield {"event": "done", "data": "{}"}
+            return
+
+        chunk_lookup = {chunk.chunk_id: chunk for chunk in chunks}
+
+        # Build context block (same as ClaudeLLM.generate)
+        context_lines = []
+        for chunk in chunks:
+            context_lines.append(
+                f"[chunk_id: {chunk.chunk_id}]\n"
+                f"Source: {chunk.doc_id} > {' > '.join(chunk.section_path)}\n"
+                f"{chunk.text}\n"
+                f"---"
+            )
+        context_block = "\n".join(context_lines)
+        full_system = get_system_prompt() + "\n" + context_block
+
+        try:
+            with llm._client.messages.stream(
+                model=llm._model,
+                max_tokens=llm._max_tokens,
+                temperature=llm._temperature,
+                system=full_system,
+                messages=[{"role": "user", "content": request.query}],
+            ) as stream:
+                full_text = ""
+                for text_chunk in stream.text_stream:
+                    if await http_request.is_disconnected():
+                        return
+                    full_text += text_chunk
+                    yield {
+                        "event": "token",
+                        "data": json.dumps({"text": text_chunk}),
+                    }
+
+            # Resolve citations from the full text
+            cited_ids = ClaudeLLM._extract_citation_ids(full_text)
+            citations = ClaudeLLM._resolve_citations(cited_ids, chunk_lookup)
+            yield {
+                "event": "citations",
+                "data": json.dumps({
+                    "citations": [asdict(c) for c in citations],
+                }),
+            }
+
+        except anthropic.APIError:
+            logger.exception("LLM streaming failed")
+            yield {
+                "event": "error",
+                "data": json.dumps({"detail": "LLM request failed. See server logs."}),
+            }
+
+        yield {"event": "done", "data": "{}"}
+
+    return EventSourceResponse(event_generator())
