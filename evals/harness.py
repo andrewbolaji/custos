@@ -63,11 +63,18 @@ def discover_suites() -> list[str]:
     return available
 
 
-def run_suite(module_name: str) -> list[EvalResult]:
+def run_suite(module_name: str, llm_evals: bool = False) -> list[EvalResult]:
     """Import and run a suite's run() function."""
     mod = importlib.import_module(module_name)
     if hasattr(mod, "run"):
-        return mod.run()  # type: ignore[no-any-return]
+        run_fn = mod.run
+        # Pass llm_evals if the suite accepts it
+        import inspect
+
+        sig = inspect.signature(run_fn)
+        if "llm_evals" in sig.parameters:
+            return run_fn(llm_evals=llm_evals)  # type: ignore[no-any-return]
+        return run_fn()  # type: ignore[no-any-return]
     return []
 
 
@@ -123,7 +130,11 @@ def print_table(results: list[EvalResult], not_implemented: list[str]) -> None:
 
 def main() -> int:
     """Run all available eval suites and print results."""
+    llm_evals = "--llm" in sys.argv
+
     print("Custos Eval Harness")
+    if llm_evals:
+        print("  (including LLM-dependent evals)")
     print("=" * 40)
 
     suites = discover_suites()
@@ -132,7 +143,7 @@ def main() -> int:
     not_implemented: list[str] = []
 
     for suite_name in suites:
-        results = run_suite(suite_name)
+        results = run_suite(suite_name, llm_evals=llm_evals)
         if results:
             print(f"  Running: {suite_name} ({len(results)} cases)")
             all_results.extend(results)

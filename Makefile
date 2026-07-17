@@ -1,4 +1,4 @@
-.PHONY: up down test evals corpus lint typecheck check install
+.PHONY: up down test evals evals-full corpus lint typecheck check install index serve
 
 # Use the venv if it exists, otherwise fall back to python3.12 or python3
 PYTHON := $(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; elif command -v python3.12 >/dev/null 2>&1; then echo python3.12; else echo python3; fi)
@@ -34,11 +34,24 @@ test:
 check: lint typecheck test
 
 # ---------------------------------------------------------------------------
-# Corpus and evals
+# Corpus, ingest, and serve
 # ---------------------------------------------------------------------------
 
 corpus:
 	$(PYTHON) corpus/generate.py
 
+index:
+	$(PYTHON) -m custos.ingest
+
+serve:
+	$(PYTHON) -m uvicorn custos.api:app --reload --port 8000
+
+# ---------------------------------------------------------------------------
+# Evals
+# ---------------------------------------------------------------------------
+
 evals:
 	$(PYTHON) -m evals.harness
+
+evals-full:
+	$(PYTHON) -m evals.harness --llm
