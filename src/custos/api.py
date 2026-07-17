@@ -13,11 +13,12 @@ could claim any permissions. /api/ingest is also unauthenticated here. This is
 a demo. Real auth is a Phase 4 deliverable. The honesty rule requires stating
 this.
 
-IMPORTANT: /api/chat/stream reuses the EXACT SAME retriever and permission
-filter as /api/chat. Both endpoints call _retrieve_permitted_chunks(), which
-calls _get_retriever().retrieve() with the user's permissions as a server-side
-Qdrant filter. There is no parallel retrieval path. The access-control hard
-gate holds on every endpoint that touches the corpus.
+IMPORTANT: Both endpoints call the SAME _run_agent() helper, which uses the
+SAME _retrieve_permitted_chunks() for retrieval and the SAME AgentLoop for
+tool orchestration. There is one retrieval path and one agent loop
+implementation. The access-control hard gate holds on every path that touches
+the corpus, including corpus-touching tools (search_documents,
+summarize_section) which route through the permission-filtered retriever.
 """
 
 from __future__ import annotations
@@ -29,17 +30,20 @@ from collections.abc import AsyncGenerator
 from dataclasses import asdict
 from typing import Any
 
-import anthropic
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
+from custos.agent_loop import AgentLoop, AgentResult
 from custos.embedder import LocalEmbedder
 from custos.ingest import ingest_corpus
 from custos.interfaces import Chunk
 from custos.llm import ClaudeLLM, get_refusal_text, get_system_prompt
 from custos.retriever import CustosRetriever
+from custos.tool_registry import ToolRegistry
+from custos.tools.search_documents import SearchDocumentsTool
+from custos.tools.summarize_section import SummarizeSectionTool
 from custos.vector_store import QdrantVectorStore
 
 logger = logging.getLogger(__name__)
@@ -115,11 +119,50 @@ def _get_llm() -> ClaudeLLM:
 def _retrieve_permitted_chunks(query: str, user_permissions: list[str]) -> list[Chunk]:
     """Retrieve chunks using the shared retriever with permission filtering.
 
-    This is the single retrieval path for both /api/chat and /api/chat/stream.
-    The permission filter is applied inside the Qdrant query (server-side).
+    This is the single retrieval path for all corpus access, including
+    corpus-touching tools. The permission filter is applied inside the
+    Qdrant query (server-side).
     """
     retriever = _get_retriever()
     return retriever.retrieve(query=query, user_permissions=user_permissions, k=5)
+
+
+def _build_registry(user_permissions: list[str]) -> ToolRegistry:
+    """Build a tool registry scoped to the current user's permissions.
+
+    Corpus-touching tools (search_documents, summarize_section) receive
+    the user's permissions and route through the SAME permission-filtered
+    retriever. They are new access-control paths; the T5 gate holds here.
+    """
+    retriever = _get_retriever()
+    registry = ToolRegistry()
+    registry.register(SearchDocumentsTool(retriever, user_permissions))
+    registry.register(SummarizeSectionTool(retriever, user_permissions))
+    return registry
+
+
+def _run_agent(query: str, user_permissions: list[str]) -> AgentResult:
+    """Run the agent loop. Used by BOTH /api/chat and /api/chat/stream.
+
+    This is the single agent-loop entry point, mirroring how both endpoints
+    previously shared _retrieve_permitted_chunks() and build_prompt().
+    """
+    llm = _get_llm()
+    chunks = _retrieve_permitted_chunks(query, user_permissions)
+
+    if not chunks:
+        return AgentResult(
+            text=get_refusal_text(),
+            citations=[],
+            refused=True,
+            events=[],
+            tool_results=[],
+        )
+
+    parts = ClaudeLLM.build_prompt(get_system_prompt(), chunks)
+    registry = _build_registry(user_permissions)
+    loop = AgentLoop(llm=llm, registry=registry)
+    return loop.run(parts, query)
 
 
 # ---------------------------------------------------------------------------
@@ -195,10 +238,11 @@ def ingest() -> dict[str, Any]:
 def chat(request: ChatRequest) -> dict[str, Any]:
     """Query the assistant (synchronous).
 
-    Uses _retrieve_permitted_chunks() for access-controlled retrieval.
+    Uses _run_agent() which calls the same _retrieve_permitted_chunks()
+    and AgentLoop as /api/chat/stream.
     """
     try:
-        llm = _get_llm()
+        _get_llm()  # Fail fast if no API key
     except HTTPException:
         raise
     except Exception as e:
@@ -208,12 +252,7 @@ def chat(request: ChatRequest) -> dict[str, Any]:
         ) from e
 
     try:
-        chunks = _retrieve_permitted_chunks(request.query, request.user_permissions)
-        answer = llm.generate(
-            system_prompt=get_system_prompt(),
-            context_chunks=chunks,
-            user_query=request.query,
-        )
+        result = _run_agent(request.query, request.user_permissions)
     except Exception as e:
         logger.exception("Chat request failed")
         raise HTTPException(
@@ -221,9 +260,9 @@ def chat(request: ChatRequest) -> dict[str, Any]:
         ) from e
 
     return {
-        "answer": answer.text,
-        "citations": [asdict(c) for c in answer.citations],
-        "refused": answer.refused,
+        "answer": result.text,
+        "citations": [asdict(c) for c in result.citations],
+        "refused": result.refused,
     }
 
 
@@ -231,18 +270,18 @@ def chat(request: ChatRequest) -> dict[str, Any]:
 async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourceResponse:
     """Query the assistant (streaming SSE).
 
-    Uses the EXACT SAME _retrieve_permitted_chunks() as /api/chat.
-    The access-control hard gate holds on this endpoint too.
+    Uses the SAME _run_agent() as /api/chat. One agent loop, both endpoints.
 
     SSE events:
-        event: token    data: {"text": "..."}
-        event: citations data: {"citations": [...]}
-        event: done     data: {}
-        event: error    data: {"detail": "..."}
-        event: refused  data: {"text": "I don't have information..."}
+        event: token      data: {"text": "..."}
+        event: citations   data: {"citations": [...]}
+        event: tool_use    data: {"tool_name": "...", "simulated": false}
+        event: done        data: {}
+        event: error       data: {"detail": "..."}
+        event: refused     data: {"text": "I don't have information..."}
     """
     try:
-        llm = _get_llm()
+        _get_llm()  # Fail fast if no API key
     except HTTPException:
         raise
     except Exception as e:
@@ -251,54 +290,56 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourc
             status_code=503, detail="Service unavailable. See server logs."
         ) from e
 
-    try:
-        chunks = _retrieve_permitted_chunks(request.query, request.user_permissions)
-    except Exception as e:
-        logger.exception("Retrieval failed")
-        raise HTTPException(
-            status_code=500, detail="Retrieval failed. See server logs."
-        ) from e
-
     async def event_generator() -> AsyncGenerator[dict[str, str], None]:
-        # Empty context: refuse immediately
-        if not chunks:
+        try:
+            result = _run_agent(request.query, request.user_permissions)
+        except Exception:
+            logger.exception("Agent loop failed")
             yield {
-                "event": "refused",
-                "data": json.dumps({"text": get_refusal_text()}),
+                "event": "error",
+                "data": json.dumps({"detail": "Chat request failed. See server logs."}),
             }
             yield {"event": "done", "data": "{}"}
             return
 
-        # Build prompt using the SAME method as generate() -- single
-        # source of truth for instruction/untrusted-content separation.
-        parts = ClaudeLLM.build_prompt(get_system_prompt(), chunks)
+        # Emit tool-use events (labels only, no raw args/outputs)
+        for event in result.events:
+            if event.kind == "tool_use":
+                yield {
+                    "event": "tool_use",
+                    "data": json.dumps({
+                        "tool_name": event.data.get("tool_name", ""),
+                    }),
+                }
+            elif event.kind == "tool_result":
+                yield {
+                    "event": "tool_use",
+                    "data": json.dumps({
+                        "tool_name": event.data.get("tool_name", ""),
+                        "simulated": event.data.get("simulated", False),
+                    }),
+                }
 
-        try:
-            with llm.stream_raw(parts, request.query) as stream:
-                full_text = ""
-                for text_chunk in stream.text_stream:
-                    if await http_request.is_disconnected():
-                        return
-                    full_text += text_chunk
-                    yield {
-                        "event": "token",
-                        "data": json.dumps({"text": text_chunk}),
-                    }
+        if result.refused:
+            yield {
+                "event": "refused",
+                "data": json.dumps({"text": result.text}),
+            }
+        else:
+            # Stream the text as a single token event (the agent loop
+            # runs synchronously; true token-level streaming is added
+            # in Agent Block 2 when the loop gains a streaming mode)
+            yield {
+                "event": "token",
+                "data": json.dumps({"text": result.text}),
+            }
 
-            # Resolve citations using the same method as generate()
-            answer = ClaudeLLM.resolve_response(full_text, parts.chunk_lookup)
+        if result.citations:
             yield {
                 "event": "citations",
                 "data": json.dumps({
-                    "citations": [asdict(c) for c in answer.citations],
+                    "citations": [asdict(c) for c in result.citations],
                 }),
-            }
-
-        except anthropic.APIError:
-            logger.exception("LLM streaming failed")
-            yield {
-                "event": "error",
-                "data": json.dumps({"detail": "LLM request failed. See server logs."}),
             }
 
         yield {"event": "done", "data": "{}"}

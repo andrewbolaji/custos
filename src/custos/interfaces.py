@@ -172,6 +172,11 @@ class Tool(ABC):
     def side_effectful(self) -> bool:
         """True if invoking this tool changes state or sends data externally."""
 
+    @property
+    @abstractmethod
+    def input_schema(self) -> dict[str, Any]:
+        """JSON Schema for the tool's input arguments."""
+
     @abstractmethod
     def run(self, arguments: dict[str, Any]) -> ToolResult:
         """Execute the tool and return the result."""

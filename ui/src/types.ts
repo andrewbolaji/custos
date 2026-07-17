@@ -19,12 +19,18 @@ export interface ChatResponse {
   refused: boolean;
 }
 
+export interface ToolUseEvent {
+  tool_name: string;
+  simulated?: boolean;
+}
+
 export interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
   citations: Citation[];
   refused: boolean;
+  toolUses: ToolUseEvent[];
   timestamp: number;
 }
 

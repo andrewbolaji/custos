@@ -22,6 +22,16 @@ export function Message({ message, isStreaming }: MessageProps) {
             The assistant could not find relevant information in the available documents.
           </p>
         )}
+        {message.toolUses.length > 0 && !isUser && (
+          <div className="tool-uses">
+            {message.toolUses.map((tu, i) => (
+              <span key={i} className="tool-use-badge">
+                {tu.tool_name}
+                {tu.simulated && " (simulated)"}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
       {message.citations.length > 0 && (
         <div className="citations-list">

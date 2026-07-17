@@ -15,7 +15,7 @@
 import { useCallback, useRef, useState } from "react";
 
 import { streamChat } from "../api";
-import type { ChatState, Citation, Message } from "../types";
+import type { ChatState, Citation, Message, ToolUseEvent } from "../types";
 
 const INITIAL_STATE: ChatState = {
   messages: [],
@@ -54,6 +54,7 @@ export function useChat(): UseChatReturn {
         content: query,
         citations: [],
         refused: false,
+        toolUses: [],
         timestamp: Date.now(),
       };
 
@@ -66,6 +67,7 @@ export function useChat(): UseChatReturn {
         content: "",
         citations: [],
         refused: false,
+        toolUses: [],
         timestamp: Date.now(),
       };
 
@@ -89,6 +91,16 @@ export function useChat(): UseChatReturn {
             ...prev,
             messages: prev.messages.map((m) =>
               m.id === assistantId ? { ...m, citations } : m,
+            ),
+          }));
+        },
+        onToolUse(event: ToolUseEvent) {
+          setState((prev) => ({
+            ...prev,
+            messages: prev.messages.map((m) =>
+              m.id === assistantId
+                ? { ...m, toolUses: [...m.toolUses, event] }
+                : m,
             ),
           }));
         },

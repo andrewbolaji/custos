@@ -2,13 +2,14 @@
  * API client for Custos. Handles SSE streaming with AbortController.
  */
 
-import type { Citation } from "./types";
+import type { Citation, ToolUseEvent } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
 export interface StreamCallbacks {
   onToken: (text: string) => void;
   onCitations: (citations: Citation[]) => void;
+  onToolUse: (event: ToolUseEvent) => void;
   onRefused: (text: string) => void;
   onError: (detail: string) => void;
   onDone: () => void;
@@ -116,6 +117,12 @@ function handleSSEEvent(
         break;
       case "citations":
         callbacks.onCitations(data.citations ?? []);
+        break;
+      case "tool_use":
+        callbacks.onToolUse({
+          tool_name: data.tool_name ?? "",
+          simulated: data.simulated,
+        });
         break;
       case "refused":
         callbacks.onRefused(data.text ?? "");
