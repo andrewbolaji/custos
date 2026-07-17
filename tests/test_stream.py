@@ -61,3 +61,27 @@ class TestStreamAccessControlSharedPath:
         assert "_retrieve_permitted_chunks" in stream_source, (
             "/api/chat/stream does not use _retrieve_permitted_chunks"
         )
+
+    def test_stream_uses_consolidated_prompt_assembly(self) -> None:
+        """Verify streaming uses build_prompt and stream_raw, not private members."""
+        import inspect
+
+        from custos import api
+
+        stream_source = inspect.getsource(api.chat_stream)
+
+        # Must use build_prompt (consolidated prompt assembly)
+        assert "build_prompt" in stream_source, (
+            "/api/chat/stream does not use ClaudeLLM.build_prompt"
+        )
+        # Must use stream_raw (consolidated streaming primitive)
+        assert "stream_raw" in stream_source, (
+            "/api/chat/stream does not use llm.stream_raw"
+        )
+        # Must NOT reach into private members
+        assert "llm._client" not in stream_source, (
+            "/api/chat/stream reaches into llm._client (use stream_raw instead)"
+        )
+        assert "llm._model" not in stream_source, (
+            "/api/chat/stream reaches into llm._model (use stream_raw instead)"
+        )

@@ -38,7 +38,7 @@ from sse_starlette.sse import EventSourceResponse
 from custos.embedder import LocalEmbedder
 from custos.ingest import ingest_corpus
 from custos.interfaces import Chunk
-from custos.llm import ClaudeLLM, get_system_prompt
+from custos.llm import ClaudeLLM, get_refusal_text, get_system_prompt
 from custos.retriever import CustosRetriever
 from custos.vector_store import QdrantVectorStore
 
@@ -264,35 +264,17 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourc
         if not chunks:
             yield {
                 "event": "refused",
-                "data": json.dumps({
-                    "text": "I don't have information about that in the available documents."
-                }),
+                "data": json.dumps({"text": get_refusal_text()}),
             }
             yield {"event": "done", "data": "{}"}
             return
 
-        chunk_lookup = {chunk.chunk_id: chunk for chunk in chunks}
-
-        # Build context block (same as ClaudeLLM.generate)
-        context_lines = []
-        for chunk in chunks:
-            context_lines.append(
-                f"[chunk_id: {chunk.chunk_id}]\n"
-                f"Source: {chunk.doc_id} > {' > '.join(chunk.section_path)}\n"
-                f"{chunk.text}\n"
-                f"---"
-            )
-        context_block = "\n".join(context_lines)
-        full_system = get_system_prompt() + "\n" + context_block
+        # Build prompt using the SAME method as generate() -- single
+        # source of truth for instruction/untrusted-content separation.
+        parts = ClaudeLLM.build_prompt(get_system_prompt(), chunks)
 
         try:
-            with llm._client.messages.stream(
-                model=llm._model,
-                max_tokens=llm._max_tokens,
-                temperature=llm._temperature,
-                system=full_system,
-                messages=[{"role": "user", "content": request.query}],
-            ) as stream:
+            with llm.stream_raw(parts, request.query) as stream:
                 full_text = ""
                 for text_chunk in stream.text_stream:
                     if await http_request.is_disconnected():
@@ -303,13 +285,12 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourc
                         "data": json.dumps({"text": text_chunk}),
                     }
 
-            # Resolve citations from the full text
-            cited_ids = ClaudeLLM._extract_citation_ids(full_text)
-            citations = ClaudeLLM._resolve_citations(cited_ids, chunk_lookup)
+            # Resolve citations using the same method as generate()
+            answer = ClaudeLLM.resolve_response(full_text, parts.chunk_lookup)
             yield {
                 "event": "citations",
                 "data": json.dumps({
-                    "citations": [asdict(c) for c in citations],
+                    "citations": [asdict(c) for c in answer.citations],
                 }),
             }
 
