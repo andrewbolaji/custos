@@ -12,7 +12,9 @@ docs/
 *.egg-info
 dist
 build
-*.md
+# Root-level markdown only. NOT recursive -- corpus/ may contain .md files
+# and they must not be excluded from the build context.
+/*.md
 .gitleaks.toml
 .github
 Makefile

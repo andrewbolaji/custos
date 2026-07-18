@@ -6,18 +6,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential && \
     rm -rf /var/lib/apt/lists/*
 
-# Install CPU-only torch FIRST. The --extra-index-url approach lets
-# pip resolve torch from the CPU index while resolving everything
-# else from PyPI. This avoids the CUDA build (~7GB savings).
+# Install with --extra-index-url so pip resolves torch from the
+# CPU index. Then remove any CUDA packages that may have landed.
 COPY pyproject.toml .
 COPY src/ src/
 RUN pip install --no-cache-dir \
     --extra-index-url https://download.pytorch.org/whl/cpu \
     . \
-    && pip uninstall -y nvidia-cublas-cu12 nvidia-cuda-cupti-cu12 \
-       nvidia-cuda-nvrtc-cu12 nvidia-cuda-runtime-cu12 nvidia-cudnn-cu12 \
-       nvidia-cufft-cu12 nvidia-curand-cu12 nvidia-cusolver-cu12 \
-       nvidia-cusparse-cu12 nvidia-nccl2 nvidia-nvtx-cu12 triton 2>/dev/null; true
+    && pip uninstall -y \
+       nvidia-cublas-cu12 nvidia-cuda-cupti-cu12 \
+       nvidia-cuda-nvrtc-cu12 nvidia-cuda-runtime-cu12 \
+       nvidia-cudnn-cu12 nvidia-cufft-cu12 nvidia-curand-cu12 \
+       nvidia-cusolver-cu12 nvidia-cusparse-cu12 \
+       nvidia-nccl-cu12 nvidia-nvtx-cu12 triton 2>/dev/null || true
+
+# BUILD-TIME ASSERTION: fail the build if a CUDA torch landed.
+# This protects against silent regression from pip resolution
+# changes, dependency bumps, or index hiccups.
+RUN python -c "\
+import torch; \
+cuda = torch.version.cuda; \
+ver = torch.__version__; \
+assert cuda is None, f'CUDA torch installed (cuda={cuda}). Use CPU-only index.'; \
+assert 'cu' not in ver, f'CUDA tag in version ({ver}). Use CPU-only index.'; \
+print(f'OK: torch {ver}, cuda={cuda}')"
 
 # Vendor the embedder model at build time.
 ENV HF_HOME=/build/models
