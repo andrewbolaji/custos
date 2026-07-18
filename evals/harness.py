@@ -39,19 +39,25 @@ class EvalResult:
 # Hard-gate suites: these protect security invariants and must never
 # silently pass as "no results." They are NOT PROVEN until real evals exist.
 HARD_GATE_SUITES = {
-    "evals.suites.access_control",
     "evals.suites.action_gating",
 }
 
-# Registry of eval suite modules (added as suites are implemented)
+# Registry of eval suite modules.
+# Threat-to-file mapping (no stubs; every suite is real):
+#   T1 (direct injection)   -> injection.py
+#   T2 (indirect injection)  -> action_gating.py (injection_cannot_cause_execution)
+#   T3 (exfiltration)        -> exfiltration.py
+#   T4 (PII)                 -> pii.py
+#   T5 (access control)      -> retrieval.py (access_control hard-gate cases)
+#   T6 (tool abuse)          -> action_gating.py
+#   T7 (denial/cost abuse)   -> action_gating.py (max_steps_enforced)
+#   T8 (supply chain)        -> CI secret scan (out-of-band)
 SUITE_MODULES = [
     "evals.suites.retrieval",
     "evals.suites.injection",
     "evals.suites.exfiltration",
     "evals.suites.pii",
-    "evals.suites.access_control",
     "evals.suites.action_gating",
-    "evals.suites.limits",
 ]
 
 

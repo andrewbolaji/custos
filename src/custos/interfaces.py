@@ -138,6 +138,14 @@ class LLM(ABC):
         """Return an answer with citations. Refuse if context does not support an answer."""
 
 
+class Redactor(ABC):
+    """Detect and mask PII in text. Provider is swappable via config."""
+
+    @abstractmethod
+    def redact(self, text: str) -> str:
+        """Return text with PII replaced by typed placeholders."""
+
+
 class Guardrail(ABC):
     """Check inputs, outputs, or actions against security policy."""
 

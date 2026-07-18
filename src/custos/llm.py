@@ -24,6 +24,7 @@ from dataclasses import dataclass
 import anthropic
 
 from custos.interfaces import LLM, Answer, Chunk, Citation
+from custos.pii import PIIRedactor
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,9 @@ _CITATIONS_RE = re.compile(r"```citations\s*\n(.+?)\n\s*```", re.DOTALL)
 _CITATIONS_UNCLOSED_RE = re.compile(r"```citations[\s\S]*$")
 _INLINE_CITE_RE = re.compile(r"\s*\[[\w./-]+_[\w./-]+\]")
 _DOUBLE_HYPHEN_RE = re.compile(r" -- ")
+
+# Singleton PII redactor (unconditional, shared across all paths)
+_pii_redactor = PIIRedactor()
 
 _REFUSAL_TEXT = "I don't have information about that in the available documents."
 
@@ -252,6 +256,8 @@ class ClaudeLLM(LLM):
         # Belt-and-suspenders: replace em/en dashes and double-hyphen separators
         answer_text = answer_text.replace("\u2014", ", ").replace("\u2013", "-")
         answer_text = _DOUBLE_HYPHEN_RE.sub(", ", answer_text)
+        # PII redaction (Tier 1: SSN, email, phone) -- unconditional
+        answer_text = _pii_redactor.redact(answer_text)
         answer_text = answer_text.strip()
         citations = ClaudeLLM.resolve_citations(cited_ids, chunk_lookup)
         refused = any(phrase in answer_text.lower() for phrase in _REFUSAL_PHRASES)

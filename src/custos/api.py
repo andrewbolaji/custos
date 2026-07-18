@@ -43,6 +43,7 @@ from custos.ingest import ingest_corpus
 from custos.interfaces import Chunk
 from custos.llm import ClaudeLLM, get_refusal_text, get_system_prompt
 from custos.pending_actions import PendingActionStore
+from custos.pii import PIIRedactor
 from custos.retriever import CustosRetriever
 from custos.tool_registry import ToolRegistry
 from custos.tools.file_ticket import FileTicketTool
@@ -52,6 +53,23 @@ from custos.tools.summarize_section import SummarizeSectionTool
 from custos.vector_store import QdrantVectorStore
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# PII log filter (threat T4): scrub PII from all log records
+# ---------------------------------------------------------------------------
+_log_redactor = PIIRedactor()
+
+
+class _PIILogFilter(logging.Filter):
+    """Scrub PII from log messages before they reach any handler."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.msg, str):
+            record.msg = _log_redactor.redact(record.msg)
+        return True
+
+
+logging.getLogger().addFilter(_PIILogFilter())
 
 app = FastAPI(
     title="Custos API",
