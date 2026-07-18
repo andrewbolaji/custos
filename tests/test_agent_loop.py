@@ -454,3 +454,110 @@ class TestStreamingInvariant:
         full_streamed = "".join(e.data["text"] for e in text_deltas)
         assert "\u2014" not in full_streamed, "Em dash leaked"
         assert "\u2013" not in full_streamed, "En dash leaked"
+
+    def test_legitimate_code_fence_survives(self) -> None:
+        """A ```python ... ``` block in an answer must NOT be truncated."""
+        llm = ClaudeLLM.__new__(ClaudeLLM)
+        llm._model = "test"
+        llm._max_tokens = 1024
+        llm._temperature = 0.1
+
+        tokens = [
+            "Here is code:\n\n",
+            "```python\n",
+            "print('hello')\n",
+            "```\n\n",
+            "That prints hello.",
+        ]
+        final_msg = FakeResponse(content=[FakeTextBlock(text="".join(tokens))])
+        mock_client = MagicMock()
+        llm._client = mock_client
+        mock_client.messages.stream.return_value = FakeStreamContext(tokens, final_msg)
+
+        registry = ToolRegistry()
+        loop = AgentLoop(llm=llm, registry=registry)
+        events = list(loop.run_streaming(_make_prompt_parts(), "show code"))
+
+        text_deltas = [e for e in events if e.kind == "text_delta"]
+        full_streamed = "".join(e.data["text"] for e in text_deltas)
+        assert "```python" in full_streamed, f"Code fence was stripped: {full_streamed!r}"
+        assert "print('hello')" in full_streamed
+        assert "That prints hello" in full_streamed
+
+    def test_long_chunk_id_stripped(self) -> None:
+        """A ~50-char inline [handbook-001_some-long-uuid] is fully stripped."""
+        llm = ClaudeLLM.__new__(ClaudeLLM)
+        llm._model = "test"
+        llm._max_tokens = 1024
+        llm._temperature = 0.1
+
+        long_id = "handbook-001_section-pto-policy-accrual-2024-q3-rev"
+        tokens = [f"PTO is 10 days [{long_id}]", " per year."]
+        final_msg = FakeResponse(content=[FakeTextBlock(text="".join(tokens))])
+        mock_client = MagicMock()
+        llm._client = mock_client
+        mock_client.messages.stream.return_value = FakeStreamContext(tokens, final_msg)
+
+        registry = ToolRegistry()
+        loop = AgentLoop(llm=llm, registry=registry)
+        events = list(loop.run_streaming(_make_prompt_parts(), "PTO?"))
+
+        text_deltas = [e for e in events if e.kind == "text_delta"]
+        full_streamed = "".join(e.data["text"] for e in text_deltas)
+        assert long_id not in full_streamed, f"Long chunk ID leaked: {full_streamed!r}"
+        assert "[" not in full_streamed or "```" in full_streamed, (
+            f"Bracket leaked: {full_streamed!r}"
+        )
+        assert "10 days" in full_streamed
+
+    def test_unclosed_citations_opener_stripped(self) -> None:
+        """A dangling ```citations at end-of-string is stripped."""
+        llm = ClaudeLLM.__new__(ClaudeLLM)
+        llm._model = "test"
+        llm._max_tokens = 1024
+        llm._temperature = 0.1
+
+        tokens = [
+            "The answer is 10 days.",
+            "\n\n```citations\n",
+            '["c1_x"]',
+            # No closing ``` -- unclosed
+        ]
+        final_msg = FakeResponse(content=[FakeTextBlock(text="".join(tokens))])
+        mock_client = MagicMock()
+        llm._client = mock_client
+        mock_client.messages.stream.return_value = FakeStreamContext(tokens, final_msg)
+
+        registry = ToolRegistry()
+        loop = AgentLoop(llm=llm, registry=registry)
+        events = list(loop.run_streaming(_make_prompt_parts(), "PTO?"))
+
+        text_deltas = [e for e in events if e.kind == "text_delta"]
+        full_streamed = "".join(e.data["text"] for e in text_deltas)
+        assert "```citations" not in full_streamed, (
+            f"Unclosed citations leaked: {full_streamed!r}"
+        )
+        assert "c1_x" not in full_streamed
+        assert "10 days" in full_streamed
+
+    def test_double_hyphen_replaced_in_stream(self) -> None:
+        """' -- ' (double-hyphen separator) becomes ', ' in streamed output."""
+        llm = ClaudeLLM.__new__(ClaudeLLM)
+        llm._model = "test"
+        llm._max_tokens = 1024
+        llm._temperature = 0.1
+
+        tokens = ["Subject -- what ", "you need to know."]
+        final_msg = FakeResponse(content=[FakeTextBlock(text="".join(tokens))])
+        mock_client = MagicMock()
+        llm._client = mock_client
+        mock_client.messages.stream.return_value = FakeStreamContext(tokens, final_msg)
+
+        registry = ToolRegistry()
+        loop = AgentLoop(llm=llm, registry=registry)
+        events = list(loop.run_streaming(_make_prompt_parts(), "test"))
+
+        text_deltas = [e for e in events if e.kind == "text_delta"]
+        full_streamed = "".join(e.data["text"] for e in text_deltas)
+        assert " -- " not in full_streamed, f"Double-hyphen leaked: {full_streamed!r}"
+        assert "Subject, what" in full_streamed
