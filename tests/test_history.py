@@ -146,13 +146,13 @@ class TestHistoryTrimming:
         """History longer than MAX_HISTORY_MESSAGES is trimmed to the tail."""
         history = [
             {"role": "user" if i % 2 == 0 else "assistant", "content": f"msg-{i}"}
-            for i in range(20)
+            for i in range(24)
         ]
         trimmed = _trim_history(history)
         assert len(trimmed) == MAX_HISTORY_MESSAGES
-        # Should keep the last 10
-        assert trimmed[0]["content"] == "msg-10"
-        assert trimmed[-1]["content"] == "msg-19"
+        # Should keep the last 20
+        assert trimmed[0]["content"] == "msg-4"
+        assert trimmed[-1]["content"] == "msg-23"
 
     def test_short_history_untouched(self) -> None:
         """History shorter than MAX is passed through unchanged."""

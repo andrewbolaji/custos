@@ -108,7 +108,7 @@ export function useChat(): UseChatReturn {
       const history: HistoryEntry[] = messagesRef.current
         .filter((m) => m.content)
         .map((m) => ({ role: m.role, content: m.content }))
-        .slice(-10);
+        .slice(-20);
 
       const controller = streamChat(query, permissions, sessionId, {
         onToken(text: string) {

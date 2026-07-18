@@ -159,7 +159,7 @@ _llm: ClaudeLLM | None = None
 _pending_actions = PendingActionStore()
 
 # Conversation memory: last N messages (sliding window)
-MAX_HISTORY_MESSAGES = 10
+MAX_HISTORY_MESSAGES = 20
 
 
 def _trim_history(history: list[dict[str, str]]) -> list[dict[str, str]]:
