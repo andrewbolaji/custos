@@ -137,17 +137,21 @@ def print_table(results: list[EvalResult], not_implemented: list[str]) -> None:
         )
     print(sep)
 
-    skipped = sum(1 for r in results if r.skipped)
+    skipped_results = [r for r in results if r.skipped]
     real_results = [r for r in results if not r.skipped]
     passed = sum(1 for r in real_results if r.passed)
     failed = sum(1 for r in real_results if not r.passed)
+    skipped = len(skipped_results)
     not_impl = len(not_implemented)
-    parts = [f"Proven: {passed}", f"Failed: {failed}"]
-    if skipped:
-        parts.append(f"Skipped: {skipped}")
+    print(f"  Proven: {passed}  Skipped: {skipped}  Failed: {failed}")
     if not_impl:
-        parts.append(f"Not implemented: {not_impl}")
-    print(f"  {'  '.join(parts)}\n")
+        print(f"  Not implemented: {not_impl}")
+
+    if skipped:
+        print("\n  SKIPPED (control not exercised):")
+        for r in skipped_results:
+            print(f"    {r.suite}/{r.case_name}: {r.detail}")
+    print()
 
 
 def main() -> int:
@@ -190,7 +194,7 @@ def main() -> int:
 
     if not_implemented:
         print(
-            f"\n  Overall: NOT PROVEN ({len(not_implemented)} suite(s) not implemented)"
+            f"  Overall: NOT PROVEN ({len(not_implemented)} suite(s) not implemented)"
         )
         print("  A control without a passing eval is not proven.\n")
         return 0  # not a CI failure, but visibly not proven
@@ -198,7 +202,11 @@ def main() -> int:
     if failures:
         return 1
 
-    print("\n  Overall: ALL PROVEN\n")
+    skipped_count = sum(1 for r in all_results if r.skipped)
+    if skipped_count > 0:
+        print(f"  Overall: PROVEN WITH SKIPS ({skipped_count} not exercised)\n")
+    else:
+        print("  Overall: ALL PROVEN\n")
     return 0
 
 
