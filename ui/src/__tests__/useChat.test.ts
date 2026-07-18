@@ -328,6 +328,42 @@ describe("useChat: reconciliation", () => {
     // Content should be at most the corrected text
     expect(msg.content.length).toBeLessThanOrEqual("Answer with artifact.".length);
   });
+
+  it("starvation does not cause burst reveal", async () => {
+    const { result } = renderHook(() => useChat());
+
+    act(() => {
+      result.current.sendMessage("test");
+    });
+
+    // Feed a small amount of text
+    act(() => {
+      lastCallbacks!.onToken("Hello");
+    });
+
+    // Wait a long time (clock runs ahead if bug is present)
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 1500));
+    });
+
+    // Now feed a large burst
+    const burst = "A".repeat(200);
+    act(() => {
+      lastCallbacks!.onToken(burst);
+    });
+
+    // After ONE frame tick (~33ms), the reveal should NOT have
+    // dumped the entire 200-char burst
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    const msg = result.current.state.messages[1];
+    // At 50 chars/sec, ~50ms reveals ~2-3 chars. Even with some
+    // rAF timing variance, it should be well under 200.
+    const revealedFromBurst = msg.content.length - "Hello".length;
+    expect(revealedFromBurst).toBeLessThan(50);
+  });
 });
 
 describe("useChat: confirmation flow", () => {

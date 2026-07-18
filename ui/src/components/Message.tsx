@@ -90,7 +90,7 @@ export function Message({ message, isStreaming, onApprove, onReject }: MessagePr
         <Logo size={18} variant="small" />
       </div>
       <div className="bubble-assistant">
-        <div className="md-content">
+        <div className={`md-content${isStreaming ? " streaming" : ""}`}>
           <MemoMarkdown content={message.content} isStreaming={isStreaming} />
         </div>
         {message.refused && (

@@ -352,6 +352,13 @@ body {
   color: var(--ink);
 }
 
+/* Soft leading edge: newest text fades up from the bottom during streaming.
+   Removed on completion so no finished message is ever translucent. */
+.md-content.streaming {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), rgba(0,0,0,0.3) 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), rgba(0,0,0,0.3) 100%);
+}
+
 .md-content p {
   margin: 0 0 10px;
 }

@@ -65,48 +65,60 @@ export function useChat(): UseChatReturn {
   const sessionId = useMemo(() => makeId(), []);
 
   // Streaming buffer: tokens accumulate in pendingRef at SSE speed.
-  // A rAF loop reveals them at a time-based pace (frame-rate independent),
-  // committing to React state at ~30fps. The rate is identical regardless
-  // of frame timing: chars_shown = elapsed_ms * CHARS_PER_SEC / 1000.
+  // A rAF loop reveals them at a time-based pace (frame-rate independent)
+  // using incremental per-frame accumulation with a fractional carry.
+  // The drain stops accruing when starved (shownRef == pending.length)
+  // so a slow token arrival cannot build a backlog that dumps on burst.
   const pendingRef = useRef("");     // full received text
   const shownRef = useRef(0);        // how many chars revealed so far
   const rafRef = useRef<number | null>(null);
   const lastCommitRef = useRef(0);   // last setState timestamp
-  const drainStartRef = useRef(0);   // when the drain started (performance.now)
-  const drainBaseRef = useRef(0);    // shownRef value when drain started
+  const lastFrameRef = useRef(0);    // timestamp of last drain frame
+  const carryRef = useRef(0);        // fractional char accumulator
   // Perceptual tuning knob: characters per second. Frame-rate independent.
   const CHARS_PER_SEC = 50;
   const COMMIT_INTERVAL = 33;        // ~30fps
+  const MAX_DT = 100;                // clamp dt so a backgrounded tab can't dump
 
   const startStreamSync = useCallback(() => {
     if (rafRef.current !== null) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     }
-    drainStartRef.current = performance.now();
-    drainBaseRef.current = shownRef.current;
+    lastFrameRef.current = performance.now();
+    carryRef.current = 0;
 
     const drain = () => {
       const pending = pendingRef.current;
-      const elapsed = performance.now() - drainStartRef.current;
-      const target = drainBaseRef.current + Math.floor(elapsed * CHARS_PER_SEC / 1000);
-      const next = Math.min(target, pending.length);
+      const now = performance.now();
+      const dt = Math.min(now - lastFrameRef.current, MAX_DT);
+      lastFrameRef.current = now;
 
-      if (next > shownRef.current) {
-        shownRef.current = next;
+      if (shownRef.current < pending.length) {
+        // Accumulate fractional chars from elapsed time
+        carryRef.current += dt * CHARS_PER_SEC / 1000;
+        const whole = Math.floor(carryRef.current);
+        carryRef.current -= whole;
+        const next = Math.min(shownRef.current + whole, pending.length);
 
-        const now = performance.now();
-        if (now - lastCommitRef.current >= COMMIT_INTERVAL || next >= pending.length) {
-          lastCommitRef.current = now;
-          const content = pending.slice(0, next);
-          const id = assistantIdRef.current;
-          setState((prev) => ({
-            ...prev,
-            messages: prev.messages.map((m) =>
-              m.id === id ? { ...m, content } : m,
-            ),
-          }));
+        if (next > shownRef.current) {
+          shownRef.current = next;
+
+          if (now - lastCommitRef.current >= COMMIT_INTERVAL || next >= pending.length) {
+            lastCommitRef.current = now;
+            const content = pending.slice(0, next);
+            const id = assistantIdRef.current;
+            setState((prev) => ({
+              ...prev,
+              messages: prev.messages.map((m) =>
+                m.id === id ? { ...m, content } : m,
+              ),
+            }));
+          }
         }
+      } else {
+        // Starved: reset carry so no backlog builds while waiting
+        carryRef.current = 0;
       }
 
       rafRef.current = requestAnimationFrame(drain);
@@ -123,21 +135,26 @@ export function useChat(): UseChatReturn {
     }
   }, []);
 
-  // Completion drain: continue revealing at the same time-based rate.
-  // Used by onDone only. Resets the drain clock from the current position.
+  // Completion drain: continue revealing at the same incremental rate.
+  // Used by onDone only.
   const finishStreamDrain = useCallback(() => {
     if (rafRef.current !== null) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     }
-    drainStartRef.current = performance.now();
-    drainBaseRef.current = shownRef.current;
+    lastFrameRef.current = performance.now();
+    carryRef.current = 0;
 
     const drainRemaining = () => {
       const pending = pendingRef.current;
-      const elapsed = performance.now() - drainStartRef.current;
-      const target = drainBaseRef.current + Math.floor(elapsed * CHARS_PER_SEC / 1000);
-      const next = Math.min(target, pending.length);
+      const now = performance.now();
+      const dt = Math.min(now - lastFrameRef.current, MAX_DT);
+      lastFrameRef.current = now;
+
+      carryRef.current += dt * CHARS_PER_SEC / 1000;
+      const whole = Math.floor(carryRef.current);
+      carryRef.current -= whole;
+      const next = Math.min(shownRef.current + whole, pending.length);
 
       if (next > shownRef.current) {
         shownRef.current = next;
@@ -225,6 +242,7 @@ export function useChat(): UseChatReturn {
       pendingRef.current = "";
       shownRef.current = 0;
       lastCommitRef.current = 0;
+      carryRef.current = 0;
       startStreamSync();
 
       const controller = streamChat(query, perms, sessionId, {
