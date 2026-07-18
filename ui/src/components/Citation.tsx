@@ -22,19 +22,6 @@ function stripMarkdown(text: string): string {
     .trim();
 }
 
-/**
- * Truncate text at a word boundary with ellipsis.
- */
-function truncateAtWord(text: string, maxLen: number): string {
-  if (text.length <= maxLen) return text;
-  const truncated = text.slice(0, maxLen);
-  const lastSpace = truncated.lastIndexOf(" ");
-  if (lastSpace > maxLen * 0.6) {
-    return truncated.slice(0, lastSpace) + "\u2026";
-  }
-  return truncated + "\u2026";
-}
-
 interface CitationProps {
   citation: CitationType;
   index: number;
@@ -44,7 +31,6 @@ export function Citation({ citation, index }: CitationProps) {
   const [expanded, setExpanded] = useState(false);
   const sectionLabel = citation.section_path.join(" \u203A ");
   const cleanSnippet = stripMarkdown(citation.snippet);
-  const displaySnippet = truncateAtWord(cleanSnippet, 250);
 
   return (
     <div>
@@ -61,7 +47,7 @@ export function Citation({ citation, index }: CitationProps) {
       </button>
       {expanded && (
         <div className="src-snippet">
-          <p>{displaySnippet}</p>
+          <p>{cleanSnippet}</p>
         </div>
       )}
     </div>

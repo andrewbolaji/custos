@@ -85,7 +85,7 @@ export function Message({ message, isStreaming, onApprove, onReject }: MessagePr
             ))}
           </div>
         )}
-        {message.citations.length > 0 && (
+        {message.citations.length > 0 && !message.pendingConfirmation && (
           <div className="src-row">
             {message.citations.map((cit, i) => (
               <Citation key={`${cit.doc_id}-${cit.char_start}`} citation={cit} index={i} />

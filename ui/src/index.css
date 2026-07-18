@@ -457,6 +457,19 @@ body {
   gap: 8px;
   flex-wrap: wrap;
   margin-top: 12px;
+  min-height: 36px; /* reserve space so chips don't shift layout */
+  animation: src-fade-in 300ms ease both;
+}
+
+@keyframes src-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .src-chip {
