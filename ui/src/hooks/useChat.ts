@@ -248,6 +248,16 @@ export function useChat(): UseChatReturn {
             ),
           }));
         },
+        onGuardrail() {
+          setState((prev) => ({
+            ...prev,
+            messages: prev.messages.map((m) =>
+              m.id === assistantId
+                ? { ...m, guardrailDetected: true }
+                : m,
+            ),
+          }));
+        },
         onConfirmAction(pending: PendingConfirmation) {
           setState((prev) => ({
             ...prev,

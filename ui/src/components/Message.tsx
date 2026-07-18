@@ -100,6 +100,12 @@ export function Message({ message, isStreaming, onApprove, onReject }: MessagePr
             </span>
           </div>
         )}
+        {message.guardrailDetected && (
+          <div className="guard-row">
+            <b>Blocked</b>
+            A retrieved document tried to inject an instruction. Ignored.
+          </div>
+        )}
         {message.pendingConfirmation && onApprove && onReject && (
           <ConfirmationCard
             pending={message.pendingConfirmation}

@@ -12,6 +12,7 @@ export interface StreamCallbacks {
   onCitations: (citations: Citation[]) => void;
   onToolUse: (event: ToolUseEvent) => void;
   onConfirmAction: (pending: PendingConfirmation) => void;
+  onGuardrail: () => void;
   onRefused: (text: string) => void;
   onError: (detail: string) => void;
   onDone: () => void;
@@ -177,6 +178,9 @@ function handleSSEEvent(
           toolName: data.tool_name ?? "",
           arguments: data.arguments ?? {},
         });
+        break;
+      case "guardrail":
+        callbacks.onGuardrail();
         break;
       case "refused":
         callbacks.onRefused(data.text ?? "");

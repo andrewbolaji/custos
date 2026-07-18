@@ -27,6 +27,7 @@ function ClockIcon() {
 export function ProvenanceRail({ message, status }: ProvenanceRailProps) {
   const hasCitations = message?.citations && message.citations.length > 0;
   const hasPending = message?.pendingConfirmation && !message.pendingConfirmation.expired;
+  const hasGuardrail = message?.guardrailDetected === true;
   const isStreaming = status === "streaming";
 
   return (
@@ -58,6 +59,16 @@ export function ProvenanceRail({ message, status }: ProvenanceRailProps) {
             </div>
           </div>
         </>
+      )}
+
+      {hasGuardrail && (
+        <div className="step guard">
+          <div className="ic"><ShieldIcon size={13} stroke="#df4a3d" strokeWidth={2.2} /></div>
+          <div>
+            <div className="t">Injected instruction blocked</div>
+            <div className="m">A document tried to override the task</div>
+          </div>
+        </div>
       )}
 
       {hasPending && (

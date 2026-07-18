@@ -84,14 +84,20 @@ class TestStreamAccessControlSharedPath:
         )
 
     def test_stream_uses_shared_retrieval(self) -> None:
-        """Verify /api/chat/stream routes through _retrieve_permitted_chunks."""
+        """Verify /api/chat/stream routes through the shared retrieval path."""
         import inspect
 
         from custos import api
 
         stream_source = inspect.getsource(api.chat_stream)
-        assert "_retrieve_permitted_chunks" in stream_source, (
-            "/api/chat/stream does not use _retrieve_permitted_chunks"
+        # Stream uses _retrieve_and_scan which wraps _retrieve_permitted_chunks
+        assert "_retrieve_and_scan" in stream_source, (
+            "/api/chat/stream does not use _retrieve_and_scan"
+        )
+        # Verify _retrieve_and_scan calls _retrieve_permitted_chunks
+        scan_source = inspect.getsource(api._retrieve_and_scan)
+        assert "_retrieve_permitted_chunks" in scan_source, (
+            "_retrieve_and_scan does not call _retrieve_permitted_chunks"
         )
 
     def test_stream_uses_agent_loop(self) -> None:

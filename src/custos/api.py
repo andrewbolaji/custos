@@ -42,6 +42,7 @@ from sse_starlette.sse import EventSourceResponse
 from custos.agent_loop import AgentLoop, AgentResult
 from custos.embedder import LocalEmbedder
 from custos.ingest import ingest_corpus
+from custos.injection_detector import InjectionDetector
 from custos.interfaces import Chunk
 from custos.llm import ClaudeLLM, get_refusal_text, get_system_prompt
 from custos.pending_actions import PendingActionStore
@@ -157,6 +158,7 @@ _store: QdrantVectorStore | None = None
 _retriever: CustosRetriever | None = None
 _llm: ClaudeLLM | None = None
 _pending_actions = PendingActionStore()
+_injection_detector = InjectionDetector()
 
 # Conversation memory: last N messages (sliding window)
 MAX_HISTORY_MESSAGES = 20
@@ -230,6 +232,27 @@ def _retrieve_permitted_chunks(query: str, user_permissions: list[str]) -> list[
     return retriever.retrieve(query=query, user_permissions=user_permissions, k=5)
 
 
+def _retrieve_and_scan(
+    query: str, user_permissions: list[str]
+) -> tuple[list[Chunk], bool]:
+    """Retrieve chunks, scan for injections, and return sanitized chunks.
+
+    Returns (sanitized_chunks, injection_detected). The source documents
+    are never modified; only the prompt copies have matched spans replaced
+    with a neutral placeholder.
+    """
+    chunks = _retrieve_permitted_chunks(query, user_permissions)
+    if not chunks:
+        return chunks, False
+    result = _injection_detector.scan(chunks)
+    if result.detected:
+        logger.info(
+            "Injection detected: %d span(s) sanitized in retrieved chunks",
+            result.count,
+        )
+    return result.sanitized_chunks, result.detected
+
+
 def _build_registry(user_permissions: list[str]) -> ToolRegistry:
     """Build a tool registry scoped to the current user's permissions.
 
@@ -251,14 +274,16 @@ def _run_agent(
     query: str,
     user_permissions: list[str],
     history: list[dict[str, str]] | None = None,
+    chunks: list[Chunk] | None = None,
 ) -> AgentResult:
     """Run the agent loop. Used by BOTH /api/chat and /api/chat/stream.
 
-    This is the single agent-loop entry point, mirroring how both endpoints
-    previously shared _retrieve_permitted_chunks() and build_prompt().
+    If chunks are provided (pre-retrieved and sanitized), uses them
+    directly. Otherwise retrieves fresh (backward compatible).
     """
     llm = _get_llm()
-    chunks = _retrieve_permitted_chunks(query, user_permissions)
+    if chunks is None:
+        chunks = _retrieve_permitted_chunks(query, user_permissions)
 
     if not chunks:
         return AgentResult(
@@ -380,7 +405,10 @@ def chat(request: ChatRequest) -> dict[str, Any]:
 
     try:
         trimmed = _trim_history(request.history)
-        result = _run_agent(request.query, request.user_permissions, history=trimmed)
+        chunks, _detected = _retrieve_and_scan(request.query, request.user_permissions)
+        result = _run_agent(
+            request.query, request.user_permissions, history=trimmed, chunks=chunks
+        )
     except Exception as e:
         logger.exception("Chat request failed")
         raise HTTPException(
@@ -422,7 +450,9 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourc
 
     async def event_generator() -> AsyncGenerator[dict[str, str], None]:
         llm = _get_llm()
-        chunks = _retrieve_permitted_chunks(request.query, request.user_permissions)
+        chunks, injection_detected = _retrieve_and_scan(
+            request.query, request.user_permissions
+        )
 
         if not chunks:
             yield {
@@ -431,6 +461,13 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourc
             }
             yield {"event": "done", "data": "{}"}
             return
+
+        # Emit guardrail event if injection was detected and sanitized
+        if injection_detected:
+            yield {
+                "event": "guardrail",
+                "data": json.dumps({"type": "injection_blocked"}),
+            }
 
         parts = ClaudeLLM.build_prompt(get_system_prompt(), chunks)
         registry = _build_registry(request.user_permissions)

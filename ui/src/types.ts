@@ -41,6 +41,7 @@ export interface Message {
   pendingConfirmation: PendingConfirmation | null;
   timestamp: number;
   permissions?: string[];
+  guardrailDetected?: boolean;
 }
 
 /**
