@@ -1,13 +1,13 @@
 # Gitleaks configuration for Custos.
 #
 # The demo corpus contains intentionally fake PII for testing security
-# controls. These values are safe by construction and must not trip the
-# scanner. Allowlists are path-scoped (never repository-wide) so the
-# scanner stays live everywhere else.
+# controls. Only the corpus directory is exempted. The scanner stays
+# live on application code, tests, and evals -- a hardcoded key in a
+# test fixture is a common real-world leak vector and must be caught.
 
 [allowlist]
 
-  # The corpus and eval directories contain synthetic PII:
+  # The corpus directory contains synthetic PII using reserved ranges:
   #
   # SSNs: 900-series numbers are in a range the Social Security
   # Administration has never issued. They cannot correspond to a
@@ -18,9 +18,10 @@
   #
   # Phones: 555-0100 through 555-0199 are ITU-T E.123 fictional
   # range numbers reserved for use in fiction and testing.
+  #
+  # If a future gitleaks version adds PII rules and flags eval or
+  # test files, widen deliberately with the finding in front of us.
 
   paths = [
     '''corpus/.*''',
-    '''evals/.*''',
-    '''tests/.*''',
   ]

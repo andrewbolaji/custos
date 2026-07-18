@@ -76,7 +76,7 @@ brew install gitleaks    # one-time
 # The hook is already at .git/hooks/pre-commit
 ```
 
-The `.gitleaks.toml` config allowlists the corpus, eval, and test directories (which contain intentionally fake PII using reserved ranges). The scanner stays live on all application code.
+The `.gitleaks.toml` config allowlists the corpus directory only (which contains intentionally fake PII using reserved ranges). The scanner stays live on application code, tests, and evals.
 
 ## Demo corpus
 
