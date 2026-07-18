@@ -31,21 +31,19 @@ export function ChatInput({ status, onSend, onCancel }: ChatInputProps) {
   }
 
   return (
-    <form className="chat-input-form" onSubmit={handleSubmit}>
-      <textarea
-        className="chat-input"
+    <form className="composer" onSubmit={handleSubmit}>
+      <input
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder={isStreaming ? "Waiting for response..." : "Ask a question about the documents..."}
+        placeholder={isStreaming ? "Waiting for response..." : "Ask about the documents\u2026"}
         disabled={isStreaming}
-        rows={1}
         aria-label="Chat message input"
       />
       {isStreaming ? (
         <button
           type="button"
-          className="btn btn-cancel"
+          className="cancel-btn"
           onClick={onCancel}
           aria-label="Cancel response"
         >
@@ -54,11 +52,20 @@ export function ChatInput({ status, onSend, onCancel }: ChatInputProps) {
       ) : (
         <button
           type="submit"
-          className="btn btn-send"
+          className="send-btn"
           disabled={!canSend}
           aria-label="Send message"
         >
           Send
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path
+              d="M4 12h16M14 6l6 6-6 6"
+              stroke="#fff"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
         </button>
       )}
     </form>

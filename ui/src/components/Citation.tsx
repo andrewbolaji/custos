@@ -9,22 +9,23 @@ interface CitationProps {
 
 export function Citation({ citation, index }: CitationProps) {
   const [expanded, setExpanded] = useState(false);
-  const sectionLabel = citation.section_path.join(" > ");
+  const sectionLabel = citation.section_path.join(" \u203A ");
 
   return (
-    <div className="citation">
+    <div>
       <button
-        className="citation-toggle"
+        className="src-chip"
         onClick={() => setExpanded(!expanded)}
         aria-expanded={expanded}
       >
-        <span className="citation-badge">{index + 1}</span>
-        <span className="citation-label">{citation.doc_name}</span>
-        <span className="citation-section">{sectionLabel}</span>
-        <span className="citation-chevron">{expanded ? "\u25B2" : "\u25BC"}</span>
+        <span className="src-num">{index + 1}</span>
+        <div>
+          <div className="src-doc">{citation.doc_name}</div>
+          <div className="src-path">{sectionLabel}</div>
+        </div>
       </button>
       {expanded && (
-        <div className="citation-snippet">
+        <div className="src-snippet">
           <p>{citation.snippet}</p>
         </div>
       )}

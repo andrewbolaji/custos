@@ -1,3 +1,5 @@
+import { ShieldIcon } from "./ShieldIcon";
+
 interface WelcomeScreenProps {
   onSuggestedQuestion: (query: string) => void;
 }
@@ -13,13 +15,16 @@ export function WelcomeScreen({ onSuggestedQuestion }: WelcomeScreenProps) {
   return (
     <div className="welcome-screen">
       <div className="welcome-content">
+        <div className="welcome-logo">
+          <ShieldIcon size={24} />
+        </div>
         <h1 className="welcome-title">Custos</h1>
         <p className="welcome-subtitle">
           Ask questions about your company documents. Answers are grounded in
           real sources with citations you can verify.
         </p>
         <div className="suggested-questions">
-          <p className="suggested-label">Try asking:</p>
+          <p className="suggested-label">Try asking</p>
           {SUGGESTED_QUESTIONS.map((q) => (
             <button
               key={q}

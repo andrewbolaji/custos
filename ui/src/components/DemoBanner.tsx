@@ -5,7 +5,7 @@ export function DemoBanner() {
   return (
     <div className="demo-banner">
       Demo mode: permissions are simulated. In production, access control is
-      enforced via authenticated identity.
+      enforced via <b>authenticated identity</b>.
     </div>
   );
 }
