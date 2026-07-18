@@ -43,6 +43,7 @@ export interface Message {
   permissions?: string[];
   guardrailDetected?: boolean;
   statusText?: string;
+  rateLimitMessage?: string;
 }
 
 /**

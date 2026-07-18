@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import anthropic
@@ -125,17 +126,22 @@ class PromptParts:
 class ClaudeLLM(LLM):
     """Generate grounded answers using Claude with ID-resolved citations."""
 
+    # Class-level default so __new__-created instances (tests) have the attr
+    _on_api_call: Callable[[], None] | None = None
+
     def __init__(
         self,
         api_key: str | None = None,
         model: str | None = None,
         temperature: float = 0.1,
         max_tokens: int = 2048,
+        on_api_call: Callable[[], None] | None = None,
     ) -> None:
         self._client = anthropic.Anthropic(api_key=api_key)
         self._model = model or os.environ.get("CUSTOS_MODEL", DEFAULT_MODEL)
         self._temperature = temperature
         self._max_tokens = max_tokens
+        self._on_api_call = on_api_call
 
     @property
     def client(self) -> anthropic.Anthropic:
@@ -152,6 +158,17 @@ class ClaudeLLM(LLM):
     @property
     def max_tokens(self) -> int:
         return self._max_tokens
+
+    def notify_api_call(self) -> None:
+        """Notify that a billed API call is about to be made.
+
+        Called by the agent loop before every messages.create or
+        messages.stream call. Fires the on_api_call callback if
+        one was injected (the API injects the rate limiter; the
+        eval harness does not).
+        """
+        if self._on_api_call is not None:
+            self._on_api_call()
 
     # ------------------------------------------------------------------
     # Prompt assembly (single source of truth)
@@ -285,6 +302,7 @@ class ClaudeLLM(LLM):
 
         parts = self.build_prompt(system_prompt, context_chunks)
 
+        self.notify_api_call()
         response = self._client.messages.create(
             model=self._model,
             max_tokens=self._max_tokens,

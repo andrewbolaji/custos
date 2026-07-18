@@ -193,17 +193,39 @@ class RateLimiter:
 
             return None
 
-    def record_request(self, session_id: str) -> None:
-        """Record a successful request (call after the query completes)."""
+    def record_api_call(self) -> None:
+        """Record a billed API call (one per model invocation).
+
+        Called from the LLM client's on_api_call callback, which fires
+        on every messages.create or messages.stream call -- including
+        every step of a multi-step agent run. This is the single point
+        where cost is counted, making it structurally impossible to
+        add a code path that spends money without counting it.
+        """
         with self._lock:
+            today = _today_str()
+            if self._today != today:
+                self._reset_today()
+            month = _month_str()
+            if self._month != month:
+                self._reset_month()
+
             self._requests_today += 1
             self._requests_month += 1
             self._cost_today += EST_COST_PER_QUERY
             self._cost_month += EST_COST_PER_QUERY
+            self._persist()
+
+    def record_session_query(self, session_id: str) -> None:
+        """Record a query against the per-session quota.
+
+        Called once per user request (not per agent step), at the
+        endpoint level before the model is called.
+        """
+        with self._lock:
             self._session_counts[session_id] = (
                 self._session_counts.get(session_id, 0) + 1
             )
-            self._persist()
 
     def get_status(self) -> dict[str, object]:
         """Return current counters for the admin endpoint."""

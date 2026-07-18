@@ -331,6 +331,16 @@ export function useChat(): UseChatReturn {
             }),
           }));
         },
+        onRateLimited(detail: string) {
+          setState((prev) => ({
+            ...prev,
+            messages: prev.messages.map((m) =>
+              m.id === assistantId
+                ? { ...m, content: detail, rateLimitMessage: detail, statusText: undefined }
+                : m,
+            ),
+          }));
+        },
         onRefused(text: string) {
           setState((prev) => ({
             ...prev,

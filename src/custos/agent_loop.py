@@ -168,7 +168,8 @@ class AgentLoop:
                 )
                 break
 
-            # Call Claude with tools
+            # Call Claude with tools (each step is a billed API call)
+            self._llm.notify_api_call()
             response = self._llm.client.messages.create(
                 model=self._llm.model,
                 max_tokens=self._llm.max_tokens,
@@ -370,6 +371,7 @@ class AgentLoop:
             tool_use_detected = False         # set when content_block_start type=tool_use
             fence_hit = False                 # set when ```citations detected in guard
 
+            self._llm.notify_api_call()
             with self._llm.client.messages.stream(
                 model=self._llm.model,
                 max_tokens=self._llm.max_tokens,

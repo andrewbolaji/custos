@@ -105,4 +105,21 @@ describe("Message rendering", () => {
 
     expect(screen.getByText("Access: HR")).toBeDefined();
   });
+
+  it("rate limit message renders without the 'could not find' line", () => {
+    const msg = makeAssistantMsg(
+      "This demo has reached its daily usage limit.",
+      { rateLimitMessage: "This demo has reached its daily usage limit." },
+    );
+    const { container } = render(
+      <Message message={msg} isStreaming={false} />,
+    );
+
+    // The limit message renders
+    expect(container.textContent).toContain("daily usage limit");
+    // The "could not find relevant information" line must NOT render
+    expect(container.textContent).not.toContain(
+      "could not find relevant information",
+    );
+  });
 });

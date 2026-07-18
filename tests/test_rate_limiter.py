@@ -52,7 +52,7 @@ class TestRateLimiter:
             )
             for i in range(5):
                 assert rl.check_request("1.2.3.4", f"sess{i}", 10) is None
-                rl.record_request(f"sess{i}")
+                rl.record_api_call()
             result = rl.check_request("1.2.3.4", "sess99", 10)
             assert result is not None
             assert "daily" in result.lower()
@@ -63,7 +63,7 @@ class TestRateLimiter:
             rl = self._make_limiter(Path(tmp), CUSTOS_RATE_PER_MIN="100")
             for _ in range(3):
                 assert rl.check_request("1.2.3.4", "sess1", 10) is None
-                rl.record_request("sess1")
+                rl.record_session_query("sess1")
             result = rl.check_request("1.2.3.4", "sess1", 10)
             assert result is not None
             assert "session" in result.lower()
@@ -90,8 +90,8 @@ class TestRateLimiter:
     def test_counters_persist_to_disk(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             rl = self._make_limiter(Path(tmp))
-            rl.record_request("sess1")
-            rl.record_request("sess1")
+            rl.record_api_call()
+            rl.record_api_call()
 
             # Read the file directly
             counters = json.loads(
@@ -104,7 +104,7 @@ class TestRateLimiter:
         with tempfile.TemporaryDirectory() as tmp:
             rl1 = self._make_limiter(Path(tmp))
             for _ in range(3):
-                rl1.record_request("sess1")
+                rl1.record_api_call()
 
             # Create a new limiter (simulating restart)
             rl2 = self._make_limiter(Path(tmp))
@@ -124,6 +124,112 @@ class TestRateLimiter:
             assert "estimated_cost_month" in status
             assert "pct_monthly_used" in status
             assert "note" in status
+
+
+class TestApiCallCounting:
+    """Regression tests for cost-control holes."""
+
+    def test_multi_step_agent_counts_each_step(self) -> None:
+        """A multi-step agent run must increment the counter once per
+        model call, not once per HTTP request. Verified: removing
+        notify_api_call from the agent loop would cause this to fail
+        (counter stays at 0).
+        """
+        from unittest.mock import MagicMock
+
+        call_count = 0
+
+        def on_call() -> None:
+            nonlocal call_count
+            call_count += 1
+
+        from custos.llm import ClaudeLLM
+
+        llm = ClaudeLLM.__new__(ClaudeLLM)
+        llm._model = "test"
+        llm._max_tokens = 1024
+        llm._temperature = 0.1
+        llm._client = MagicMock()
+        llm._on_api_call = on_call
+
+        from dataclasses import dataclass
+        from typing import Any
+
+        @dataclass
+        class FakeBlock:
+            type: str = "text"
+            text: str = "answer"
+
+        @dataclass
+        class FakeToolBlock:
+            type: str = "tool_use"
+            id: str = "tu_1"
+            name: str = "lookup"
+            input: dict[str, Any] | None = None
+            def __post_init__(self) -> None:
+                if self.input is None:
+                    self.input = {"q": "test"}
+
+        @dataclass
+        class FakeResponse:
+            content: list[Any] | None = None
+            def __post_init__(self) -> None:
+                if self.content is None:
+                    self.content = [FakeBlock()]
+
+        from custos.agent_loop import AgentLoop
+        from custos.interfaces import Chunk, Tool, ToolResult
+        from custos.tool_registry import ToolRegistry
+
+        class ReadTool(Tool):
+            @property
+            def name(self) -> str:
+                return "lookup"
+            @property
+            def description(self) -> str:
+                return "lookup"
+            @property
+            def side_effectful(self) -> bool:
+                return False
+            @property
+            def input_schema(self) -> dict[str, Any]:
+                return {"type": "object", "properties": {}}
+            def run(self, arguments: dict[str, Any]) -> ToolResult:
+                return ToolResult(tool_name="lookup", output="found")
+
+        # Two steps: tool call then final answer
+        llm._client.messages.create.side_effect = [
+            FakeResponse(content=[FakeToolBlock()]),
+            FakeResponse(content=[FakeBlock()]),
+        ]
+
+        registry = ToolRegistry()
+        registry.register(ReadTool())
+        chunk = Chunk(
+            chunk_id="c_1", doc_id="d", text="text",
+            section_path=["S"], char_start=0, char_end=4,
+            permissions=["general"],
+        )
+        parts = ClaudeLLM.build_prompt("System.", [chunk])
+        loop = AgentLoop(llm=llm, registry=registry)
+        loop.run(parts, "test")
+
+        # Two model calls = two on_api_call invocations
+        assert call_count == 2, (
+            f"Expected 2 API calls (2 steps), got {call_count}. "
+            "Multi-step agent runs must count each step."
+        )
+
+    def test_eval_harness_does_not_count(self) -> None:
+        """The eval harness creates ClaudeLLM without on_api_call,
+        so eval runs do not pollute production counters.
+        """
+        from custos.llm import ClaudeLLM
+
+        llm = ClaudeLLM.__new__(ClaudeLLM)
+        llm._on_api_call = None
+        # Should not raise
+        llm.notify_api_call()
 
 
 class TestAdminEndpoint:

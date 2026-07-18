@@ -14,6 +14,7 @@ export interface StreamCallbacks {
   onToolUse: (event: ToolUseEvent) => void;
   onConfirmAction: (pending: PendingConfirmation) => void;
   onGuardrail: () => void;
+  onRateLimited: (detail: string) => void;
   onRefused: (text: string) => void;
   onError: (detail: string) => void;
   onDone: () => void;
@@ -53,10 +54,10 @@ export function streamChat(
     .then(async (response) => {
       if (!response.ok) {
         if (response.status === 429) {
-          // Rate limit: render as a refusal-style bubble, not an error
+          // Rate limit: render in the bubble, not the error banner
           const data = await response.json().catch(() => null);
           const detail = data?.detail ?? "Usage limit reached. Please try again later.";
-          callbacks.onRefused(detail);
+          callbacks.onRateLimited(detail);
         } else {
           callbacks.onError(`Server returned ${response.status}`);
         }

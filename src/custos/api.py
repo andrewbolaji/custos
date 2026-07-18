@@ -247,7 +247,10 @@ def _get_llm() -> ClaudeLLM:
                 status_code=503,
                 detail="ANTHROPIC_API_KEY not configured. The LLM is unavailable.",
             )
-        _llm = ClaudeLLM(api_key=api_key)
+        _llm = ClaudeLLM(
+            api_key=api_key,
+            on_api_call=_rate_limiter.record_api_call,
+        )
     return _llm
 
 
@@ -478,6 +481,7 @@ def chat(request: ChatRequest, http_request: Request) -> dict[str, Any]:
     limit_msg = _check_rate_limit(http_request, request.query, request.session_id)
     if limit_msg:
         raise HTTPException(status_code=429, detail=limit_msg)
+    _rate_limiter.record_session_query(request.session_id)
 
     try:
         _get_llm()  # Fail fast if no API key
@@ -492,9 +496,6 @@ def chat(request: ChatRequest, http_request: Request) -> dict[str, Any]:
     try:
         trimmed = _trim_history(request.history)
         chunks, _detected = _retrieve_and_scan(request.query, request.user_permissions)
-        # Record at model-call commitment (after retrieval, before LLM)
-        if chunks:
-            _rate_limiter.record_request(request.session_id)
         result = _run_agent(
             request.query, request.user_permissions, history=trimmed, chunks=chunks
         )
@@ -530,6 +531,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourc
     limit_msg = _check_rate_limit(http_request, request.query, request.session_id)
     if limit_msg:
         raise HTTPException(status_code=429, detail=limit_msg)
+    _rate_limiter.record_session_query(request.session_id)
 
     try:
         _get_llm()  # Fail fast if no API key
@@ -576,10 +578,6 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourc
                 "event": "guardrail",
                 "data": json.dumps({"type": "injection_blocked"}),
             }
-
-        # Record at model-call commitment (after retrieval, before LLM).
-        # Cost is incurred from this point regardless of client disconnect.
-        _rate_limiter.record_request(request.session_id)
 
         parts = ClaudeLLM.build_prompt(get_system_prompt(), chunks)
         registry = _build_registry(request.user_permissions)
