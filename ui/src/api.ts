@@ -52,7 +52,14 @@ export function streamChat(
   })
     .then(async (response) => {
       if (!response.ok) {
-        callbacks.onError(`Server returned ${response.status}`);
+        if (response.status === 429) {
+          // Rate limit: render as a refusal-style bubble, not an error
+          const data = await response.json().catch(() => null);
+          const detail = data?.detail ?? "Usage limit reached. Please try again later.";
+          callbacks.onRefused(detail);
+        } else {
+          callbacks.onError(`Server returned ${response.status}`);
+        }
         callbacks.onDone();
         return;
       }

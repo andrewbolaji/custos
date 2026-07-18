@@ -43,10 +43,11 @@ def compute_expected_chunks() -> int:
 def ensure_index_ready(
     embedder: LocalEmbedder,
     store: QdrantVectorStore,
-) -> int:
+) -> tuple[int, int]:
     """Verify the index is complete; reindex if not.
 
-    Returns the final point count.
+    Returns (actual_count, expected_count). The caller should consider
+    the index ready only when actual == expected.
     """
     expected = compute_expected_chunks()
     logger.info("Expected chunk count from manifest: %d", expected)
@@ -59,7 +60,7 @@ def ensure_index_ready(
 
     if actual == expected:
         logger.info("Index verified: %d/%d chunks present", actual, expected)
-        return actual
+        return actual, expected
 
     if actual > 0:
         logger.warning(
@@ -76,4 +77,4 @@ def ensure_index_ready(
         final = 0
 
     logger.info("Reindex complete: %d chunks indexed", final)
-    return final
+    return final, expected

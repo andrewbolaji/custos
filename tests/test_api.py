@@ -9,17 +9,32 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+import custos.api as api_module
 from custos.api import app
 
 client = TestClient(app)
 
 
 class TestHealthEndpoint:
-    def test_health_returns_ok(self) -> None:
-        response = client.get("/api/health")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] in ("ok", "degraded")
+    def test_health_returns_ok_when_index_ready(self) -> None:
+        original = api_module._index_ready
+        try:
+            api_module._index_ready = True
+            response = client.get("/api/health")
+            assert response.status_code == 200
+            assert response.json() == {"status": "ok"}
+        finally:
+            api_module._index_ready = original
+
+    def test_health_returns_degraded_when_index_not_ready(self) -> None:
+        original = api_module._index_ready
+        try:
+            api_module._index_ready = False
+            response = client.get("/api/health")
+            assert response.status_code == 200
+            assert response.json() == {"status": "degraded"}
+        finally:
+            api_module._index_ready = original
 
 
 class TestChatEndpointValidation:

@@ -28,6 +28,7 @@ load_dotenv()
 import json
 import logging
 import os
+import secrets
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import asdict
@@ -128,16 +129,18 @@ _install_pii_formatter()
 @asynccontextmanager
 async def _lifespan(app_instance: FastAPI) -> AsyncGenerator[None, None]:
     """Startup: PII formatter, index verification."""
-    global _index_ready, _index_chunks  # noqa: PLW0603
+    global _index_ready, _index_chunks, _index_expected  # noqa: PLW0603
     _install_pii_formatter()
 
     # Verify/rebuild the index before reporting healthy
     try:
         embedder = _get_embedder()
         store = _get_store()
-        _index_chunks = ensure_index_ready(embedder, store)
-        _index_ready = _index_chunks > 0
-        logger.info("Boot: index ready, %d chunks", _index_chunks)
+        _index_chunks, _index_expected = ensure_index_ready(embedder, store)
+        _index_ready = _index_chunks == _index_expected and _index_chunks > 0
+        logger.info("Boot: index %s, %d/%d chunks",
+                     "ready" if _index_ready else "INCOMPLETE",
+                     _index_chunks, _index_expected)
     except Exception:
         logger.exception("Boot: index check failed")
         _index_ready = False
@@ -182,6 +185,7 @@ _injection_detector = InjectionDetector()
 _rate_limiter = RateLimiter()
 _index_ready = False
 _index_chunks = 0
+_index_expected = 0
 
 # Admin token: must be set in the environment. Never in the repo.
 _ADMIN_TOKEN = os.environ.get("CUSTOS_ADMIN_TOKEN", "")
@@ -247,20 +251,34 @@ def _get_llm() -> ClaudeLLM:
     return _llm
 
 
+# Whether to trust X-Forwarded-For (only behind a trusted reverse proxy).
+# Off by default; production compose sets CUSTOS_TRUST_PROXY=1.
+_TRUST_PROXY = os.environ.get("CUSTOS_TRUST_PROXY", "").lower() in ("1", "true", "yes")
+
+
 def _get_client_ip(request: Request) -> str:
-    """Extract the real client IP. In production, Caddy sets
-    X-Forwarded-For from the TCP remote address (client cannot
-    forge it). In dev, falls back to the direct client host.
+    """Extract the real client IP.
+
+    When CUSTOS_TRUST_PROXY is set, reads X-Forwarded-For (Caddy sets
+    it from the TCP remote address; the client cannot forge it because
+    Caddy overwrites the header). Otherwise uses the direct socket.
     """
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
+    if _TRUST_PROXY:
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
     client = request.client
     return client.host if client else "unknown"
 
 
 def _check_rate_limit(request: Request, query: str, session_id: str) -> str | None:
-    """Check all rate limits. Returns None if allowed, or an error message."""
+    """Check all rate limits. Returns None if allowed, or an error message.
+
+    Does NOT record. Recording happens at the point the model call is
+    committed (after retrieval returns chunks, before the LLM call).
+    Both /api/chat and /api/chat/stream call _rate_limiter.record_request
+    at that point.
+    """
     client_ip = _get_client_ip(request)
     return _rate_limiter.check_request(client_ip, session_id, len(query))
 
@@ -418,7 +436,8 @@ def admin_status(request: Request) -> dict[str, Any]:
     all other routes.
     """
     auth = request.headers.get("authorization", "")
-    if not _ADMIN_TOKEN or auth != f"Bearer {_ADMIN_TOKEN}":
+    expected = f"Bearer {_ADMIN_TOKEN}"
+    if not _ADMIN_TOKEN or not secrets.compare_digest(auth, expected):
         raise HTTPException(status_code=404)
 
     rate_status = _rate_limiter.get_status()
@@ -426,6 +445,7 @@ def admin_status(request: Request) -> dict[str, Any]:
         "status": "ok" if _index_ready else "degraded",
         "index_ready": _index_ready,
         "chunks": _index_chunks,
+        "expected_chunks": _index_expected,
         "qdrant_connected": _store is not None,
         "model": os.environ.get("CUSTOS_MODEL", "claude-sonnet-4-6"),
         **rate_status,
@@ -455,7 +475,6 @@ def ingest() -> dict[str, Any]:
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(request: ChatRequest, http_request: Request) -> dict[str, Any]:
     """Query the assistant (synchronous)."""
-    # Rate limit check
     limit_msg = _check_rate_limit(http_request, request.query, request.session_id)
     if limit_msg:
         raise HTTPException(status_code=429, detail=limit_msg)
@@ -473,6 +492,9 @@ def chat(request: ChatRequest, http_request: Request) -> dict[str, Any]:
     try:
         trimmed = _trim_history(request.history)
         chunks, _detected = _retrieve_and_scan(request.query, request.user_permissions)
+        # Record at model-call commitment (after retrieval, before LLM)
+        if chunks:
+            _rate_limiter.record_request(request.session_id)
         result = _run_agent(
             request.query, request.user_permissions, history=trimmed, chunks=chunks
         )
@@ -505,7 +527,6 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourc
         event: error       data: {"detail": "..."}
         event: refused     data: {"text": "I don't have information..."}
     """
-    # Rate limit check
     limit_msg = _check_rate_limit(http_request, request.query, request.session_id)
     if limit_msg:
         raise HTTPException(status_code=429, detail=limit_msg)
@@ -555,6 +576,10 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourc
                 "event": "guardrail",
                 "data": json.dumps({"type": "injection_blocked"}),
             }
+
+        # Record at model-call commitment (after retrieval, before LLM).
+        # Cost is incurred from this point regardless of client disconnect.
+        _rate_limiter.record_request(request.session_id)
 
         parts = ClaudeLLM.build_prompt(get_system_prompt(), chunks)
         registry = _build_registry(request.user_permissions)
@@ -656,7 +681,6 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourc
                 }),
             }
 
-        _rate_limiter.record_request(request.session_id)
         yield {"event": "done", "data": "{}"}
 
     return EventSourceResponse(event_generator())
