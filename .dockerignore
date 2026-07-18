@@ -5,9 +5,14 @@ __pycache__
 .env
 .env.local
 node_modules
-ui/node_modules
-ui/dist
-ui/design-reference
+ui/
+tests/
+evals/
+docs/
 *.egg-info
 dist
 build
+*.md
+.gitleaks.toml
+.github
+Makefile
