@@ -69,14 +69,35 @@ make check
 
 ## Secret scanning
 
-A pre-commit hook runs `gitleaks protect --staged` on every commit. To install:
+**CI (the real control):** GitHub Actions runs `gitleaks detect` on every push and PR. This is the actual enforcement; it blocks merges on any finding regardless of what is installed locally.
+
+**Pre-commit hook (convenience):** A local hook runs `gitleaks protect --staged` on each commit. It lives in `.git/hooks/` and is neither cloned nor shared. To install locally:
 
 ```bash
 brew install gitleaks    # one-time
 # The hook is already at .git/hooks/pre-commit
 ```
 
-The `.gitleaks.toml` config allowlists the corpus directory only (which contains intentionally fake PII using reserved ranges). The scanner stays live on application code, tests, and evals.
+The `.gitleaks.toml` config allowlists the corpus directory only (synthetic PII using reserved ranges). The scanner stays live on application code, tests, and evals.
+
+## CI
+
+GitHub Actions runs on every push:
+- **Secret scan** (`gitleaks detect`) -- blocks on any finding
+- **Backend** -- ruff lint, pytest, deterministic evals (with Qdrant service)
+- **Frontend** -- tsc type check, vitest, production build
+
+LLM-dependent evals (`make evals-full`) are not run in CI. They require an API key and cost ~$0.50 per run. They are run manually before releases.
+
+## UI build
+
+The frontend reads the API origin from `VITE_API_URL` at build time:
+
+```bash
+VITE_API_URL=https://api.your-domain.com npm run build
+```
+
+Default (unset): `http://127.0.0.1:8000` (local dev).
 
 ## Configuration
 

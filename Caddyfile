@@ -1,0 +1,20 @@
+# Caddy reverse proxy for Custos API.
+#
+# Replace DOMAIN_PLACEHOLDER with the actual domain before deploying.
+# Caddy auto-provisions TLS via Let's Encrypt.
+
+DOMAIN_PLACEHOLDER {
+    # Reverse proxy to the API container (listens on 127.0.0.1:8000 only).
+    reverse_proxy 127.0.0.1:8000
+
+    # X-Forwarded-For: OVERWRITE, not append.
+    #
+    # Why: the rate limiter trusts this header to identify the real
+    # client IP (CUSTOS_TRUST_PROXY=1). If we append to a client-
+    # supplied value, an attacker rotates fake IPs in the header and
+    # every request looks like a new client, defeating per-IP limits.
+    #
+    # Caddy's header_up overwrites the header with the TCP remote
+    # address, which the client cannot forge.
+    header_up X-Forwarded-For {remote_host}
+}

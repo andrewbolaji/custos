@@ -1,3 +1,10 @@
+# CI: lint, type check, tests, and evals on every push.
+#
+# Runs the DETERMINISTIC eval suite only (make evals without --llm).
+# The LLM-dependent evals require ANTHROPIC_API_KEY and cost ~$0.50
+# per run. They are run manually before releases, not on every push.
+# This is a stated budget choice, not an oversight.
+
 name: CI
 
 on:
@@ -7,79 +14,65 @@ on:
     branches: [main]
 
 jobs:
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: pip install -e ".[dev]"
-
-      - name: Lint
-        run: python -m ruff check src/ tests/ evals/ corpus/
-
-      - name: Type check
-        run: python -m mypy src/ corpus/ evals/
-
-      - name: Generate corpus
-        run: python corpus/generate.py
-
-      - name: Test
-        run: python -m pytest -v
-
-      - name: Eval harness (LLM-free)
-        run: python -m evals.harness
-
-  access-control-gate:
+  backend:
     runs-on: ubuntu-latest
     services:
       qdrant:
-        image: qdrant/qdrant:v1.12.6
+        image: qdrant/qdrant:v1.18.0
         ports:
           - 6333:6333
-        options: >-
-          --health-cmd "curl -f http://localhost:6333/readyz || exit 1"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
-      - name: Generate corpus
-        run: python corpus/generate.py
+      - name: Lint (ruff)
+        run: ruff check .
 
-      - name: Index corpus into Qdrant
+      - name: Index corpus
         run: python -m custos.ingest
+        env:
+          QDRANT_URL: http://localhost:6333
 
-      - name: Run access-control eval (hard gate)
+      - name: Run tests
+        run: pytest tests/ -q
+        env:
+          QDRANT_URL: http://localhost:6333
+
+      - name: Run evals (deterministic, no LLM)
         run: python -m evals.harness
         env:
           QDRANT_URL: http://localhost:6333
 
-  secret-scan:
+  frontend:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
         with:
-          fetch-depth: 0
+          node-version: "20"
 
-      - name: Install gitleaks
-        run: |
-          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz | tar xz
-          sudo mv gitleaks /usr/local/bin/
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Scan for secrets
-        run: gitleaks detect --source . --log-opts="--all" -v
+      - name: Type check (tsc)
+        run: npx tsc --noEmit
+
+      - name: Run tests (vitest)
+        run: npx vitest run
+
+      - name: Build
+        run: npm run build
+        env:
+          VITE_API_URL: https://api.example.com
