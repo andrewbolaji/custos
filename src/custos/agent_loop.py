@@ -357,16 +357,20 @@ class AgentLoop:
                     })
 
             if not tool_use_blocks:
-                # Final answer -- now emit the buffered text as deltas.
-                for text_chunk in buffered_text:
-                    yield AgentEvent(
-                        kind="text_delta",
-                        data={"text": text_chunk},
-                    )
+                # Final answer. Resolve citations from the full raw text,
+                # then emit only the cleaned answer text (no ```citations```
+                # block, no inline [chunk_id] markers) as deltas.
                 full_text = "".join(buffered_text)
                 answer = ClaudeLLM.resolve_response(
                     full_text, prompt_parts.chunk_lookup
                 )
+                # Emit the cleaned text as a single delta (the raw token
+                # stream would leak citation artifacts token-by-token).
+                if answer.text:
+                    yield AgentEvent(
+                        kind="text_delta",
+                        data={"text": answer.text},
+                    )
                 if answer.citations:
                     yield AgentEvent(
                         kind="citations",

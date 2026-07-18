@@ -317,14 +317,16 @@ describe("useChat: confirmation flow", () => {
     expect(msg.pendingConfirmation!.toolName).toBe("send_email");
   });
 
-  it("approveAction calls confirmAction and returns to idle", async () => {
+  it("approveAction replaces content with clean result, one (simulated)", async () => {
     const { result } = renderHook(() => useChat());
 
     act(() => {
       result.current.sendMessage("send an email");
     });
 
+    // Model streams some draft text before showing the card
     act(() => {
+      lastCallbacks!.onToken("I've drafted an email for your review.");
       lastCallbacks!.onConfirmAction({
         actionId: "uuid-123",
         toolName: "send_email",
@@ -343,12 +345,17 @@ describe("useChat: confirmation flow", () => {
     expect(confirmActionCalls).toHaveLength(1);
     expect(confirmActionCalls[0].approved).toBe(true);
     expect(result.current.state.status).toBe("idle");
-    // Pending confirmation is cleared
+
     const msg = result.current.state.messages[1];
     expect(msg.pendingConfirmation).toBeNull();
+    // Content is replaced, not appended to stale draft text
+    expect(msg.content).toBe("Email sent. (simulated)");
+    // Exactly one "(simulated)", not doubled
+    const matches = msg.content.match(/\(simulated\)/g);
+    expect(matches).toHaveLength(1);
   });
 
-  it("rejectAction calls confirmAction with approved=false", async () => {
+  it("rejectAction replaces content with clean rejection line", async () => {
     const { result } = renderHook(() => useChat());
 
     act(() => {
@@ -356,6 +363,7 @@ describe("useChat: confirmation flow", () => {
     });
 
     act(() => {
+      lastCallbacks!.onToken("I've drafted an email.");
       lastCallbacks!.onConfirmAction({
         actionId: "uuid-456",
         toolName: "send_email",
@@ -372,5 +380,79 @@ describe("useChat: confirmation flow", () => {
     expect(confirmActionCalls).toHaveLength(1);
     expect(confirmActionCalls[0].approved).toBe(false);
     expect(result.current.state.status).toBe("idle");
+
+    const msg = result.current.state.messages[1];
+    // Content is replaced with a single clean line
+    expect(msg.content).toBe("Action was rejected.");
+    expect(msg.pendingConfirmation).toBeNull();
+  });
+
+  it("new message retires older pending cards as expired", () => {
+    const { result } = renderHook(() => useChat());
+
+    // First message with a pending action
+    act(() => {
+      result.current.sendMessage("send an email");
+    });
+    act(() => {
+      lastCallbacks!.onConfirmAction({
+        actionId: "uuid-old",
+        toolName: "send_email",
+        arguments: { to: "a@b.com" },
+      });
+      lastCallbacks!.onDone();
+    });
+
+    expect(result.current.state.status).toBe("awaiting_confirmation");
+    expect(result.current.state.messages[1].pendingConfirmation?.actionId).toBe("uuid-old");
+
+    // Send a new message, which should retire the old card
+    act(() => {
+      result.current.sendMessage("now file a ticket");
+    });
+
+    // The old assistant message's pending card should be expired
+    const oldMsg = result.current.state.messages[1];
+    expect(oldMsg.pendingConfirmation?.expired).toBe(true);
+  });
+
+  it("newer confirm_action retires earlier pending cards", () => {
+    const { result } = renderHook(() => useChat());
+
+    act(() => {
+      result.current.sendMessage("send an email");
+    });
+
+    // First confirmation
+    act(() => {
+      lastCallbacks!.onConfirmAction({
+        actionId: "uuid-first",
+        toolName: "send_email",
+        arguments: { to: "a@b.com" },
+      });
+      lastCallbacks!.onDone();
+    });
+
+    // Complete that flow, then send another message
+    act(() => {
+      result.current.sendMessage("now send another email");
+    });
+    act(() => {
+      lastCallbacks!.onConfirmAction({
+        actionId: "uuid-second",
+        toolName: "send_email",
+        arguments: { to: "b@c.com" },
+      });
+      lastCallbacks!.onDone();
+    });
+
+    // First card should be expired
+    const firstMsg = result.current.state.messages[1];
+    expect(firstMsg.pendingConfirmation?.expired).toBe(true);
+
+    // Second card should be active
+    const secondMsg = result.current.state.messages[3];
+    expect(secondMsg.pendingConfirmation?.expired).toBeFalsy();
+    expect(secondMsg.pendingConfirmation?.actionId).toBe("uuid-second");
   });
 });

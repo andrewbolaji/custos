@@ -28,6 +28,7 @@ export interface PendingConfirmation {
   actionId: string;
   toolName: string;
   arguments: Record<string, unknown>;
+  expired?: boolean;
 }
 
 export interface Message {

@@ -24,22 +24,6 @@ import type {
   ToolUseEvent,
 } from "../types";
 
-/**
- * Strip LLM citation artifacts from visible text.
- * Removes ```citations [...] ``` fences and inline [chunk_id] markers
- * so only clean prose reaches the user. The citations SSE event carries
- * the structured data for the SOURCES chips.
- */
-function stripLlmArtifacts(text: string): string {
-  // Remove ```citations ... ``` block (may be partial during streaming)
-  let cleaned = text.replace(/```citations\s*\n[\s\S]*?```/g, "");
-  // Remove partial opening fence at the end (streaming may cut mid-block)
-  cleaned = cleaned.replace(/```citations[\s\S]*$/, "");
-  // Remove inline [chunk_id] markers (chunk IDs contain underscores)
-  cleaned = cleaned.replace(/\s*\[[\w./-]+_[\w./-]+\]/g, "");
-  return cleaned.trimEnd();
-}
-
 const INITIAL_STATE: ChatState = {
   messages: [],
   status: "idle",
@@ -102,7 +86,16 @@ export function useChat(): UseChatReturn {
       };
 
       setState((prev) => ({
-        messages: [...prev.messages, userMessage, assistantMessage],
+        messages: [
+          // Retire any older pending cards before adding the new pair
+          ...prev.messages.map((m) =>
+            m.pendingConfirmation && m.role === "assistant"
+              ? { ...m, pendingConfirmation: { ...m.pendingConfirmation, expired: true } }
+              : m,
+          ),
+          userMessage,
+          assistantMessage,
+        ],
         status: "streaming",
         errorMessage: null,
       }));
@@ -112,7 +105,7 @@ export function useChat(): UseChatReturn {
           setState((prev) => ({
             ...prev,
             messages: prev.messages.map((m) =>
-              m.id === assistantId ? { ...m, content: stripLlmArtifacts(m.content + text) } : m,
+              m.id === assistantId ? { ...m, content: m.content + text } : m,
             ),
           }));
         },
@@ -138,11 +131,19 @@ export function useChat(): UseChatReturn {
           setState((prev) => ({
             ...prev,
             status: "awaiting_confirmation",
-            messages: prev.messages.map((m) =>
-              m.id === assistantId
-                ? { ...m, pendingConfirmation: pending }
-                : m,
-            ),
+            messages: prev.messages.map((m) => {
+              if (m.id === assistantId) {
+                return { ...m, pendingConfirmation: pending };
+              }
+              // Retire any older pending cards so they can't be clicked
+              if (m.pendingConfirmation && m.role === "assistant") {
+                return {
+                  ...m,
+                  pendingConfirmation: { ...m.pendingConfirmation, expired: true },
+                };
+              }
+              return m;
+            }),
           }));
         },
         onRefused(text: string) {
@@ -227,18 +228,18 @@ export function useChat(): UseChatReturn {
       setState((prev) => ({ ...prev, status: "streaming" }));
       confirmAction(actionId, sessionId, true)
         .then((result) => {
-          const assistantId = assistantIdRef.current;
+          // Build a clean one-line result. The output from the tool
+          // already contains "(simulated)" when applicable, so we
+          // must not append it again.
+          const resultText = result.output;
           setState((prev) => ({
             ...prev,
             status: "idle",
             messages: prev.messages.map((m) =>
-              m.id === assistantId
+              m.pendingConfirmation?.actionId === actionId
                 ? {
                     ...m,
-                    content:
-                      m.content +
-                      `\n\n${result.output}` +
-                      (result.simulated ? " (simulated)" : ""),
+                    content: resultText,
                     pendingConfirmation: null,
                   }
                 : m,
@@ -257,17 +258,16 @@ export function useChat(): UseChatReturn {
   );
 
   const rejectAction = useCallback((actionId: string) => {
-    const assistantId = assistantIdRef.current;
     confirmAction(actionId, sessionId, false)
       .then(() => {
         setState((prev) => ({
           ...prev,
           status: "idle",
           messages: prev.messages.map((m) =>
-            m.id === assistantId
+            m.pendingConfirmation?.actionId === actionId
               ? {
                   ...m,
-                  content: m.content + "\n\nAction was rejected.",
+                  content: "Action was rejected.",
                   pendingConfirmation: null,
                 }
               : m,
@@ -279,7 +279,7 @@ export function useChat(): UseChatReturn {
           ...prev,
           status: "idle",
           messages: prev.messages.map((m) =>
-            m.id === assistantId
+            m.pendingConfirmation?.actionId === actionId
               ? { ...m, pendingConfirmation: null }
               : m,
           ),
