@@ -1,4 +1,4 @@
-import { ShieldIcon } from "./ShieldIcon";
+import { Logo } from "./Logo";
 
 interface WelcomeScreenProps {
   onSuggestedQuestion: (query: string) => void;
@@ -16,7 +16,7 @@ export function WelcomeScreen({ onSuggestedQuestion }: WelcomeScreenProps) {
     <div className="welcome-screen">
       <div className="welcome-content">
         <div className="welcome-logo">
-          <ShieldIcon size={24} />
+          <Logo size={48} />
         </div>
         <h1 className="welcome-title">Custos</h1>
         <p className="welcome-subtitle">

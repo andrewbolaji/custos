@@ -51,7 +51,7 @@ body {
 }
 
 .demo-banner b {
-  color: var(--amber);
+  color: var(--amber-ink);
   font-weight: 600;
 }
 
@@ -69,21 +69,6 @@ body {
   display: flex;
   align-items: center;
   gap: 11px;
-}
-
-.logo {
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  background: var(--cobalt);
-  display: grid;
-  place-items: center;
-  box-shadow: 0 2px 0 var(--cobalt-d);
-}
-
-.logo svg {
-  width: 16px;
-  height: 16px;
 }
 
 .brand-name {
@@ -153,13 +138,13 @@ body {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 
 .message-list-scroll {
   flex: 1;
   overflow-y: auto;
   padding: 26px var(--sp-2xl) 10px;
-  scroll-behavior: smooth;
 }
 
 /* --- Welcome screen --- */
@@ -176,19 +161,8 @@ body {
 }
 
 .welcome-logo {
-  width: 48px;
-  height: 48px;
-  border-radius: 12px;
-  background: var(--cobalt);
-  display: grid;
-  place-items: center;
   margin: 0 auto 16px;
-  box-shadow: 0 3px 0 var(--cobalt-d);
-}
-
-.welcome-logo svg {
-  width: 24px;
-  height: 24px;
+  line-height: 0;
 }
 
 .welcome-title {
@@ -586,7 +560,7 @@ body {
   font-weight: 600;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: var(--amber);
+  color: var(--amber-ink);
 }
 
 .conf-header .sim-tag {

@@ -15,6 +15,7 @@ export function MessageList({ messages, status, onApprove, onReject }: MessageLi
   const scrollRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const userScrolledRef = useRef(false);
+  const prevMsgCountRef = useRef(messages.length);
 
   // Detect user scroll-up: if the user scrolls away from the bottom,
   // stop auto-scrolling so controls aren't moving targets.
@@ -25,19 +26,31 @@ export function MessageList({ messages, status, onApprove, onReject }: MessageLi
     userScrolledRef.current = !atBottom;
   }, []);
 
-  // Re-enable auto-scroll when streaming stops (new answer complete)
+  // Re-enable auto-scroll when streaming stops
   useEffect(() => {
     if (status !== "streaming") {
       userScrolledRef.current = false;
     }
   }, [status]);
 
-  // Smooth auto-scroll during streaming (only if user hasn't scrolled up)
+  // Auto-scroll: during streaming, set scrollTop directly (no animation
+  // restart). For discrete jumps (new message added), use smooth scroll.
   useEffect(() => {
-    if (!userScrolledRef.current) {
+    if (userScrolledRef.current) return;
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const isNewMessage = messages.length !== prevMsgCountRef.current;
+    prevMsgCountRef.current = messages.length;
+
+    if (isNewMessage) {
+      // Discrete jump: smooth scroll to bottom
       endRef.current?.scrollIntoView({ behavior: "smooth" });
+    } else if (status === "streaming") {
+      // During streaming: follow bottom directly (no animation restart)
+      el.scrollTop = el.scrollHeight;
     }
-  }, [messages, messages[messages.length - 1]?.content]);
+  }, [messages, messages[messages.length - 1]?.content, status]);
 
   return (
     <div

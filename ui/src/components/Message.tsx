@@ -9,6 +9,7 @@ import type { Message as MessageType } from "../types";
 
 import { Citation } from "./Citation";
 import { ConfirmationCard } from "./ConfirmationCard";
+import { Logo } from "./Logo";
 import { ShieldIcon } from "./ShieldIcon";
 
 const PERMISSION_LABELS: Record<string, string> = {
@@ -55,7 +56,7 @@ export function Message({ message, isStreaming, onApprove, onReject }: MessagePr
   return (
     <div className="row-assistant">
       <div className="avatar">
-        <ShieldIcon size={15} />
+        <Logo size={18} variant="small" />
       </div>
       <div className="bubble-assistant">
         <div className="md-content">

@@ -57,30 +57,52 @@ export function useChat(): UseChatReturn {
   // Stable session ID: generated once per hook mount (per browser session)
   const sessionId = useMemo(() => makeId(), []);
 
-  // Streaming buffer: tokens accumulate in a ref at SSE speed,
-  // and a rAF loop syncs to state at rendering cadence (~60fps).
-  // This eliminates per-token React re-renders and markdown flicker.
-  const streamBufferRef = useRef("");
-  const streamDirtyRef = useRef(false);
+  // Streaming buffer: tokens accumulate in pendingRef at SSE speed.
+  // A rAF loop drains them at a character pace (~6 chars/frame) into
+  // shownRef, committing to React state at ~30fps. This makes the
+  // text flow like water instead of dumping in lumps.
+  const pendingRef = useRef("");     // full received text
+  const shownRef = useRef(0);        // how many chars revealed so far
   const rafRef = useRef<number | null>(null);
+  const lastCommitRef = useRef(0);   // last setState timestamp
+  const CHARS_PER_FRAME = 6;
+  const COMMIT_INTERVAL = 33;        // ~30fps
 
   const startStreamSync = useCallback(() => {
     if (rafRef.current !== null) return;
-    const sync = () => {
-      if (streamDirtyRef.current) {
-        streamDirtyRef.current = false;
-        const content = streamBufferRef.current;
-        const id = assistantIdRef.current;
-        setState((prev) => ({
-          ...prev,
-          messages: prev.messages.map((m) =>
-            m.id === id ? { ...m, content } : m,
-          ),
-        }));
+    const drain = () => {
+      const pending = pendingRef.current;
+      const shown = shownRef.current;
+
+      if (shown < pending.length) {
+        // Adaptive step: drain faster if a lot is pending, but
+        // never dump the whole buffer at once.
+        const behind = pending.length - shown;
+        const step = Math.min(
+          Math.max(CHARS_PER_FRAME, Math.floor(behind / 4)),
+          behind,
+        );
+        const next = Math.min(shown + step, pending.length);
+        shownRef.current = next;
+
+        // Throttle React commits to ~30fps
+        const now = performance.now();
+        if (now - lastCommitRef.current >= COMMIT_INTERVAL || next === pending.length) {
+          lastCommitRef.current = now;
+          const content = pending.slice(0, next);
+          const id = assistantIdRef.current;
+          setState((prev) => ({
+            ...prev,
+            messages: prev.messages.map((m) =>
+              m.id === id ? { ...m, content } : m,
+            ),
+          }));
+        }
       }
-      rafRef.current = requestAnimationFrame(sync);
+
+      rafRef.current = requestAnimationFrame(drain);
     };
-    rafRef.current = requestAnimationFrame(sync);
+    rafRef.current = requestAnimationFrame(drain);
   }, []);
 
   const stopStreamSync = useCallback(() => {
@@ -88,18 +110,28 @@ export function useChat(): UseChatReturn {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     }
-    // Final flush
-    if (streamDirtyRef.current) {
-      streamDirtyRef.current = false;
-      const content = streamBufferRef.current;
-      const id = assistantIdRef.current;
-      setState((prev) => ({
-        ...prev,
-        messages: prev.messages.map((m) =>
-          m.id === id ? { ...m, content } : m,
-        ),
-      }));
-    }
+    // Let remaining buffer drain smoothly on completion
+    // by scheduling a final drain loop that stops when caught up.
+    const drainRemaining = () => {
+      const pending = pendingRef.current;
+      const shown = shownRef.current;
+      if (shown < pending.length) {
+        const step = Math.min(CHARS_PER_FRAME * 2, pending.length - shown);
+        shownRef.current = shown + step;
+        const content = pending.slice(0, shownRef.current);
+        const id = assistantIdRef.current;
+        setState((prev) => ({
+          ...prev,
+          messages: prev.messages.map((m) =>
+            m.id === id ? { ...m, content } : m,
+          ),
+        }));
+        rafRef.current = requestAnimationFrame(drainRemaining);
+      } else {
+        rafRef.current = null;
+      }
+    };
+    rafRef.current = requestAnimationFrame(drainRemaining);
   }, []);
 
   // Cleanup on unmount
@@ -163,21 +195,27 @@ export function useChat(): UseChatReturn {
         .slice(-20);
 
       // Reset stream buffer for this message
-      streamBufferRef.current = "";
-      streamDirtyRef.current = false;
+      pendingRef.current = "";
+      shownRef.current = 0;
+      lastCommitRef.current = 0;
       startStreamSync();
 
       const controller = streamChat(query, permissions, sessionId, {
         onToken(text: string) {
-          // Append to buffer ref (fast, no React re-render).
-          // The rAF loop syncs to state at rendering cadence.
-          streamBufferRef.current += text;
-          streamDirtyRef.current = true;
+          // Append to pending ref (fast, no React re-render).
+          // The rAF drain loop reveals characters at a smooth pace.
+          pendingRef.current += text;
         },
         onTextReplace(text: string) {
-          // Reconciliation: replace buffer and flush immediately.
-          streamBufferRef.current = text;
-          streamDirtyRef.current = true;
+          // Reconciliation: replace pending and show all immediately.
+          pendingRef.current = text;
+          shownRef.current = text.length;
+          setState((prev) => ({
+            ...prev,
+            messages: prev.messages.map((m) =>
+              m.id === assistantId ? { ...m, content: text } : m,
+            ),
+          }));
         },
         onCitations(citations: Citation[]) {
           setState((prev) => ({

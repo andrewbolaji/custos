@@ -55,7 +55,8 @@
   --cobalt-soft: #eef1fd;
 
   /* --- Accents --- */
-  --amber: #d99413;
+  --amber-brand: #f0b429;  /* logo chief, large fills */
+  --amber-ink: #d99413;    /* small text: "requires approval", demo banner highlight */
   --red: #df4a3d;
   --green: #11996b;
 
