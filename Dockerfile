@@ -34,6 +34,7 @@ RUN chown -R custos:custos /app
 ENV HF_HOME=/app/models
 ENV TRANSFORMERS_OFFLINE=1
 ENV HF_DATASETS_OFFLINE=1
+ENV CUSTOS_CORPUS_DIR=/app/corpus/output
 
 USER custos
 

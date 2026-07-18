@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import logging
+import os
 from pathlib import Path
 
 import yaml
@@ -27,7 +28,10 @@ from custos.vector_store import QdrantVectorStore
 
 logger = logging.getLogger(__name__)
 
-CORPUS_DIR = Path(__file__).parent.parent.parent / "corpus" / "output"
+_corpus_env = os.environ.get("CUSTOS_CORPUS_DIR")
+CORPUS_DIR = Path(_corpus_env) if _corpus_env else (
+    Path(__file__).parent.parent.parent / "corpus" / "output"
+)
 BATCH_SIZE = 32
 
 
