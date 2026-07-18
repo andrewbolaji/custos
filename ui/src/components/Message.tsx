@@ -131,7 +131,7 @@ export function Message({ message, isStreaming, onApprove, onReject }: MessagePr
         ) : (
           <MdContainer content={message.content} isStreaming={isStreaming} />
         )}
-        {message.refused && !message.rateLimitMessage && (
+        {message.refused && !message.noticeMessage && (
           <p className="message-refused">
             The assistant could not find relevant information in the available documents.
           </p>

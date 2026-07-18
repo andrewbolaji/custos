@@ -93,7 +93,7 @@ describe("Message rendering", () => {
     const msg = makeAssistantMsg(
       "The assistant is temporarily unavailable. Please try again shortly.",
       {
-        rateLimitMessage: "The assistant is temporarily unavailable. Please try again shortly.",
+        noticeMessage: "The assistant is temporarily unavailable. Please try again shortly.",
         refused: true,
       },
     );
@@ -132,7 +132,7 @@ describe("Message rendering", () => {
     const msg = makeAssistantMsg(
       "This demo has reached its daily usage limit.",
       {
-        rateLimitMessage: "This demo has reached its daily usage limit.",
+        noticeMessage: "This demo has reached its daily usage limit.",
         refused: true,  // would trigger the "could not find" line without the guard
       },
     );

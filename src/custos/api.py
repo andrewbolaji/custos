@@ -561,9 +561,21 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourc
             "data": json.dumps({"text": "Searching documents"}),
         }
 
-        chunks, injection_detected = _retrieve_and_scan(
-            request.query, request.user_permissions
-        )
+        try:
+            chunks, injection_detected = _retrieve_and_scan(
+                request.query, request.user_permissions
+            )
+        except Exception:
+            # Retrieval failed (Qdrant down after boot). Cannot raise
+            # HTTPException here -- headers are already sent. Emit a
+            # clean terminal event instead.
+            logger.exception("Retrieval failed in stream generator")
+            yield {
+                "event": "notice",
+                "data": json.dumps({"text": _UNAVAILABLE_MSG}),
+            }
+            yield {"event": "done", "data": "{}"}
+            return
 
         if not chunks:
             yield {

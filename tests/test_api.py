@@ -108,6 +108,41 @@ class TestRetrievalConnectionError:
             api_module._index_ready = original
 
 
+class TestStreamRetrievalFailure:
+    """A Qdrant failure in the streaming path must emit a clean notice
+    event, not an unhandled exception in a 200 response.
+    """
+
+    def test_stream_retrieval_failure_emits_notice(self) -> None:
+        original = api_module._index_ready
+        try:
+            api_module._index_ready = True
+            with patch.object(
+                api_module, "_retrieve_permitted_chunks",
+                side_effect=ConnectionError("Qdrant refused connection"),
+            ):
+                response = client.post(
+                    "/api/chat/stream",
+                    json={"query": "test"},
+                )
+                # Response is 200 (SSE) -- the error is in the event stream
+                assert response.status_code == 200
+                body = response.text
+
+                # Must contain the clean unavailable message
+                assert "temporarily unavailable" in body.lower()
+
+                # Must NOT contain internal details
+                assert "qdrant" not in body.lower()
+                assert "connection" not in body.lower()
+                assert "Traceback" not in body
+
+                # Must terminate with a done event
+                assert '"done"' in body or "event: done" in body
+        finally:
+            api_module._index_ready = original
+
+
 class TestChatEndpointValidation:
     def test_chat_requires_query(self) -> None:
         response = client.post("/api/chat", json={})

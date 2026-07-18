@@ -14,7 +14,7 @@ export interface StreamCallbacks {
   onToolUse: (event: ToolUseEvent) => void;
   onConfirmAction: (pending: PendingConfirmation) => void;
   onGuardrail: () => void;
-  onRateLimited: (detail: string) => void;
+  onNotice: (detail: string) => void;
   onRefused: (text: string) => void;
   onError: (detail: string) => void;
   onDone: () => void;
@@ -56,11 +56,11 @@ export function streamChat(
         if (response.status === 429) {
           const data = await response.json().catch(() => null);
           const detail = data?.detail ?? "Usage limit reached. Please try again later.";
-          callbacks.onRateLimited(detail);
+          callbacks.onNotice(detail);
         } else if (response.status === 503) {
           const data = await response.json().catch(() => null);
           const detail = data?.detail ?? "The assistant is temporarily unavailable.";
-          callbacks.onRateLimited(detail);
+          callbacks.onNotice(detail);
         } else {
           callbacks.onError(`Server returned ${response.status}`);
         }
@@ -196,6 +196,9 @@ function handleSSEEvent(
         break;
       case "guardrail":
         callbacks.onGuardrail();
+        break;
+      case "notice":
+        callbacks.onNotice(data.text ?? "");
         break;
       case "refused":
         callbacks.onRefused(data.text ?? "");

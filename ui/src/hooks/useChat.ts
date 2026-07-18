@@ -331,12 +331,12 @@ export function useChat(): UseChatReturn {
             }),
           }));
         },
-        onRateLimited(detail: string) {
+        onNotice(detail: string) {
           setState((prev) => ({
             ...prev,
             messages: prev.messages.map((m) =>
               m.id === assistantId
-                ? { ...m, content: detail, rateLimitMessage: detail, statusText: undefined }
+                ? { ...m, content: detail, noticeMessage: detail, statusText: undefined }
                 : m,
             ),
           }));
