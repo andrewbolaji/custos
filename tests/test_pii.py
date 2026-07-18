@@ -131,22 +131,60 @@ class TestCustomAllowlist:
 
 
 class TestLogFilter:
-    def test_pii_scrubbed_from_log_records(self) -> None:
-        """The log filter must mask PII in log messages."""
-        from custos.api import _PIILogFilter
+    """Test PII scrubbing through the REAL logging path.
 
-        f = _PIILogFilter()
-        record = logging.LogRecord(
-            name="test",
-            level=logging.INFO,
-            pathname="",
-            lineno=0,
-            msg="User SSN is 900-55-0000 and email is james@example.org",
-            args=None,
-            exc_info=None,
+    Uses a child logger (like custos.api uses logging.getLogger(__name__)),
+    captures handler output, and verifies PII is redacted in the final
+    formatted string. Tests f-string, %s args, and exception tracebacks.
+    """
+
+    def _capture_log_output(self, logger_name: str, log_fn) -> str:  # type: ignore[no-untyped-def]
+        """Run log_fn(logger), capture and return the handler output."""
+        from custos.api import PIIFormatter
+
+        child = logging.getLogger(logger_name)
+        child.setLevel(logging.DEBUG)
+
+        handler = logging.StreamHandler(stream=__import__("io").StringIO())
+        handler.setFormatter(PIIFormatter())
+        child.addHandler(handler)
+        try:
+            log_fn(child)
+            handler.flush()
+            return handler.stream.getvalue()
+        finally:
+            child.removeHandler(handler)
+
+    def test_fstring_pii_redacted_via_child_logger(self) -> None:
+        """PII in an f-string message through a child logger is redacted."""
+        ssn = "900-55-0000"
+        email = "james@example.org"
+        output = self._capture_log_output(
+            "custos.test.fstring",
+            lambda log: log.info(f"SSN is {ssn} email {email}"),
         )
-        f.filter(record)
-        assert "900-55-0000" not in record.msg
-        assert "james@example.org" not in record.msg
-        assert "[SSN]" in record.msg
-        assert "[EMAIL]" in record.msg
+        assert "900-55-0000" not in output, f"SSN leaked in log: {output!r}"
+        assert "james@example.org" not in output, f"Email leaked in log: {output!r}"
+        assert "[SSN]" in output
+        assert "[EMAIL]" in output
+
+    def test_percent_args_pii_redacted_via_child_logger(self) -> None:
+        """PII passed as %s args through a child logger is redacted."""
+        output = self._capture_log_output(
+            "custos.test.args",
+            lambda log: log.info("SSN %s email %s", "900-55-0000", "james@example.org"),
+        )
+        assert "900-55-0000" not in output, f"SSN leaked in log: {output!r}"
+        assert "james@example.org" not in output, f"Email leaked in log: {output!r}"
+
+    def test_exception_traceback_pii_redacted(self) -> None:
+        """PII inside an exception message in a traceback is redacted."""
+        def _log_with_exception(log: logging.Logger) -> None:
+            try:
+                raise ValueError("User SSN is 900-55-0000")
+            except ValueError:
+                log.exception("Failed for james@example.org")
+
+        output = self._capture_log_output("custos.test.exc", _log_with_exception)
+        assert "900-55-0000" not in output, f"SSN leaked in traceback: {output!r}"
+        assert "james@example.org" not in output, f"Email leaked in traceback: {output!r}"

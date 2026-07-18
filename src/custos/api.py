@@ -55,21 +55,50 @@ from custos.vector_store import QdrantVectorStore
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# PII log filter (threat T4): scrub PII from all log records
+# PII log scrubbing (threat T4): redact the FINAL formatted output
+# ---------------------------------------------------------------------------
+# A logging.Filter on the root logger does NOT work: Python calls
+# ancestor HANDLERS on propagation, never ancestor logger filters.
+# And redacting record.msg misses PII passed as %s args.
+#
+# Solution: a Formatter subclass that redacts the result of
+# super().format(), catching msg + args + exception tracebacks.
+# We install it by wrapping every handler's formatter.
 # ---------------------------------------------------------------------------
 _log_redactor = PIIRedactor()
 
 
-class _PIILogFilter(logging.Filter):
-    """Scrub PII from log messages before they reach any handler."""
+class PIIFormatter(logging.Formatter):
+    """Wraps another formatter and redacts PII from the final output."""
 
-    def filter(self, record: logging.LogRecord) -> bool:
-        if isinstance(record.msg, str):
-            record.msg = _log_redactor.redact(record.msg)
-        return True
+    def __init__(self, inner: logging.Formatter | None = None) -> None:
+        super().__init__()
+        self._inner = inner or logging.Formatter()
+
+    def format(self, record: logging.LogRecord) -> str:
+        formatted = self._inner.format(record)
+        return _log_redactor.redact(formatted)
 
 
-logging.getLogger().addFilter(_PIILogFilter())
+def _install_pii_formatter() -> None:
+    """Wrap every existing handler's formatter with PIIFormatter.
+
+    Called at import time. Also installs a PIIFormatter on the root
+    logger if it has no handlers yet (covers basicConfig/uvicorn).
+    """
+    root = logging.getLogger()
+    if root.handlers:
+        for handler in root.handlers:
+            handler.setFormatter(PIIFormatter(handler.formatter))
+    else:
+        # No handlers yet (common before uvicorn configures logging).
+        # Add one with PIIFormatter so early log calls are covered.
+        handler = logging.StreamHandler()
+        handler.setFormatter(PIIFormatter())
+        root.addHandler(handler)
+
+
+_install_pii_formatter()
 
 app = FastAPI(
     title="Custos API",
