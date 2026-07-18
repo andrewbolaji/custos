@@ -13,7 +13,7 @@
  * Every terminal transition returns to idle.
  */
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { confirmAction, streamChat, type HistoryEntry } from "../api";
 import type {
@@ -56,6 +56,58 @@ export function useChat(): UseChatReturn {
   messagesRef.current = state.messages;
   // Stable session ID: generated once per hook mount (per browser session)
   const sessionId = useMemo(() => makeId(), []);
+
+  // Streaming buffer: tokens accumulate in a ref at SSE speed,
+  // and a rAF loop syncs to state at rendering cadence (~60fps).
+  // This eliminates per-token React re-renders and markdown flicker.
+  const streamBufferRef = useRef("");
+  const streamDirtyRef = useRef(false);
+  const rafRef = useRef<number | null>(null);
+
+  const startStreamSync = useCallback(() => {
+    if (rafRef.current !== null) return;
+    const sync = () => {
+      if (streamDirtyRef.current) {
+        streamDirtyRef.current = false;
+        const content = streamBufferRef.current;
+        const id = assistantIdRef.current;
+        setState((prev) => ({
+          ...prev,
+          messages: prev.messages.map((m) =>
+            m.id === id ? { ...m, content } : m,
+          ),
+        }));
+      }
+      rafRef.current = requestAnimationFrame(sync);
+    };
+    rafRef.current = requestAnimationFrame(sync);
+  }, []);
+
+  const stopStreamSync = useCallback(() => {
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    // Final flush
+    if (streamDirtyRef.current) {
+      streamDirtyRef.current = false;
+      const content = streamBufferRef.current;
+      const id = assistantIdRef.current;
+      setState((prev) => ({
+        ...prev,
+        messages: prev.messages.map((m) =>
+          m.id === id ? { ...m, content } : m,
+        ),
+      }));
+    }
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    };
+  }, []);
 
   const sendMessage = useCallback(
     (query: string, permissions: string[] = ["general"]) => {
@@ -110,24 +162,22 @@ export function useChat(): UseChatReturn {
         .map((m) => ({ role: m.role, content: m.content }))
         .slice(-20);
 
+      // Reset stream buffer for this message
+      streamBufferRef.current = "";
+      streamDirtyRef.current = false;
+      startStreamSync();
+
       const controller = streamChat(query, permissions, sessionId, {
         onToken(text: string) {
-          setState((prev) => ({
-            ...prev,
-            messages: prev.messages.map((m) =>
-              m.id === assistantId ? { ...m, content: m.content + text } : m,
-            ),
-          }));
+          // Append to buffer ref (fast, no React re-render).
+          // The rAF loop syncs to state at rendering cadence.
+          streamBufferRef.current += text;
+          streamDirtyRef.current = true;
         },
         onTextReplace(text: string) {
-          // Reconciliation: resolve_response produced different text
-          // than what was streamed. Replace the entire displayed text.
-          setState((prev) => ({
-            ...prev,
-            messages: prev.messages.map((m) =>
-              m.id === assistantId ? { ...m, content: text } : m,
-            ),
-          }));
+          // Reconciliation: replace buffer and flush immediately.
+          streamBufferRef.current = text;
+          streamDirtyRef.current = true;
         },
         onCitations(citations: Citation[]) {
           setState((prev) => ({
@@ -188,6 +238,7 @@ export function useChat(): UseChatReturn {
           }));
         },
         onDone() {
+          stopStreamSync();
           setState((prev) => ({
             ...prev,
             status:
@@ -209,6 +260,7 @@ export function useChat(): UseChatReturn {
     controllerRef.current?.abort();
     controllerRef.current = null;
     lastQueryRef.current = null;
+    stopStreamSync();
     const cancelledAssistantId = assistantIdRef.current;
     assistantIdRef.current = "";
     // Remove the in-flight user + assistant message pair so cancel

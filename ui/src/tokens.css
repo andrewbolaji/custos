@@ -34,10 +34,10 @@
 }
 
 :root {
-  /* --- Surfaces --- */
-  --bg: #e9e4d9;
-  --surface: #ffffff;
-  --surface-2: #faf8f3;
+  /* --- Surfaces (three distinct planes) --- */
+  --bg: #e2dcd0;          /* chat canvas: warm mid-tone */
+  --surface: #ffffff;      /* header + bubbles: white */
+  --surface-2: #f7f5f0;   /* rail + secondary: near-white, distinct from canvas */
 
   /* --- Ink --- */
   --ink: #191710;

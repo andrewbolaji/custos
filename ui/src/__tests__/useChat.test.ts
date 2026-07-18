@@ -214,7 +214,7 @@ describe("useChat: never-stuck invariant", () => {
     expect(result.current.state.status).toBe("streaming");
   });
 
-  it("accumulates tokens in the assistant message", () => {
+  it("accumulates tokens in the assistant message", async () => {
     const { result } = renderHook(() => useChat());
 
     act(() => {
@@ -225,6 +225,11 @@ describe("useChat: never-stuck invariant", () => {
       lastCallbacks!.onToken("A");
       lastCallbacks!.onToken("B");
       lastCallbacks!.onToken("C");
+    });
+
+    // Flush the rAF-based stream sync loop
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
     });
 
     const assistantMsg = result.current.state.messages[1];

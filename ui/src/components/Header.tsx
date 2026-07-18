@@ -13,10 +13,6 @@ export function Header() {
         </div>
       </div>
       <div className="header-pills">
-        <span className="pill">
-          <span className="dot" />
-          general access
-        </span>
         <span className="pill scoped" title="This answer used only documents your access level is permitted to see.">
           <ShieldIcon size={11} stroke="#11996b" strokeWidth={2.4} />
           Access: Standard
