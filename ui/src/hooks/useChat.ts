@@ -69,7 +69,13 @@ export function useChat(): UseChatReturn {
   const COMMIT_INTERVAL = 33;        // ~30fps
 
   const startStreamSync = useCallback(() => {
-    if (rafRef.current !== null) return;
+    // Always cancel any in-flight loop and start fresh.
+    // (No early return: a leftover drain from a previous message
+    // would block this one from ever starting.)
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
     const drain = () => {
       const pending = pendingRef.current;
       const shown = shownRef.current;
@@ -79,7 +85,7 @@ export function useChat(): UseChatReturn {
         // never dump the whole buffer at once.
         const behind = pending.length - shown;
         const step = Math.min(
-          Math.max(CHARS_PER_FRAME, Math.floor(behind / 4)),
+          Math.max(CHARS_PER_FRAME, Math.floor(behind / 8)),
           behind,
         );
         const next = Math.min(shown + step, pending.length);
@@ -105,13 +111,22 @@ export function useChat(): UseChatReturn {
     rafRef.current = requestAnimationFrame(drain);
   }, []);
 
+  // Hard stop: cancel the loop outright (for cancel/error where the
+  // message is being removed -- draining it is wasted work).
   const stopStreamSync = useCallback(() => {
     if (rafRef.current !== null) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     }
-    // Let remaining buffer drain smoothly on completion
-    // by scheduling a final drain loop that stops when caught up.
+  }, []);
+
+  // Completion drain: let the remaining buffer finish revealing
+  // smoothly instead of snapping. Used by onDone only.
+  const finishStreamDrain = useCallback(() => {
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
     const drainRemaining = () => {
       const pending = pendingRef.current;
       const shown = shownRef.current;
@@ -276,7 +291,7 @@ export function useChat(): UseChatReturn {
           }));
         },
         onDone() {
-          stopStreamSync();
+          finishStreamDrain();
           setState((prev) => ({
             ...prev,
             status:
