@@ -158,6 +158,26 @@ _retriever: CustosRetriever | None = None
 _llm: ClaudeLLM | None = None
 _pending_actions = PendingActionStore()
 
+# Conversation memory: last N messages (sliding window)
+MAX_HISTORY_MESSAGES = 10
+
+
+def _trim_history(history: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Trim history to the last MAX_HISTORY_MESSAGES entries.
+
+    History is untrusted client input (like user_permissions). It
+    provides conversational context but does not bypass any security
+    control. Retrieval, PII redaction, and tool gating all apply
+    per turn regardless of history content.
+    """
+    valid = [
+        m for m in history
+        if isinstance(m, dict)
+        and m.get("role") in ("user", "assistant")
+        and isinstance(m.get("content"), str)
+    ]
+    return valid[-MAX_HISTORY_MESSAGES:]
+
 
 def _get_embedder() -> LocalEmbedder:
     global _embedder
@@ -227,7 +247,11 @@ def _build_registry(user_permissions: list[str]) -> ToolRegistry:
     return registry
 
 
-def _run_agent(query: str, user_permissions: list[str]) -> AgentResult:
+def _run_agent(
+    query: str,
+    user_permissions: list[str],
+    history: list[dict[str, str]] | None = None,
+) -> AgentResult:
     """Run the agent loop. Used by BOTH /api/chat and /api/chat/stream.
 
     This is the single agent-loop entry point, mirroring how both endpoints
@@ -248,7 +272,7 @@ def _run_agent(query: str, user_permissions: list[str]) -> AgentResult:
     parts = ClaudeLLM.build_prompt(get_system_prompt(), chunks)
     registry = _build_registry(user_permissions)
     loop = AgentLoop(llm=llm, registry=registry)
-    return loop.run(parts, query)
+    return loop.run(parts, query, history=history)
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +293,7 @@ class ChatRequest(BaseModel):
     query: str
     user_permissions: list[str] = ["general"]
     session_id: str = ""
+    history: list[dict[str, str]] = []
 
 
 class CitationResponse(BaseModel):
@@ -354,7 +379,8 @@ def chat(request: ChatRequest) -> dict[str, Any]:
         ) from e
 
     try:
-        result = _run_agent(request.query, request.user_permissions)
+        trimmed = _trim_history(request.history)
+        result = _run_agent(request.query, request.user_permissions, history=trimmed)
     except Exception as e:
         logger.exception("Chat request failed")
         raise HTTPException(
@@ -409,6 +435,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourc
         parts = ClaudeLLM.build_prompt(get_system_prompt(), chunks)
         registry = _build_registry(request.user_permissions)
         loop = AgentLoop(llm=llm, registry=registry)
+        trimmed = _trim_history(request.history)
 
         try:
             stream_iter = loop.run_streaming(
@@ -416,6 +443,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourc
                 request.query,
                 session_id=request.session_id,
                 pending_store=_pending_actions,
+                history=trimmed,
             )
             for event in stream_iter:
                 # Stop streaming if the client disconnected

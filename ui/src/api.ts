@@ -20,11 +20,17 @@ export interface StreamCallbacks {
  * Stream a chat response via SSE. Returns an AbortController the caller
  * can use to cancel the request.
  */
+export interface HistoryEntry {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export function streamChat(
   query: string,
   userPermissions: string[],
   sessionId: string,
   callbacks: StreamCallbacks,
+  history: HistoryEntry[] = [],
 ): AbortController {
   const controller = new AbortController();
 
@@ -32,6 +38,7 @@ export function streamChat(
     query,
     user_permissions: userPermissions,
     session_id: sessionId,
+    history,
   });
 
   fetch(`${API_BASE}/api/chat/stream`, {

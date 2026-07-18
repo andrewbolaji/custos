@@ -110,11 +110,26 @@ Committed keys, poisoned deps.
 | T7 (denial/cost) | `action_gating.py` | 1 | ENFORCED |
 | T8 (supply chain) | CI (out-of-band) | - | DEFENDED (manual) |
 
+## Client-supplied trust boundaries (documented demo simplifications)
+
+Two fields in the request body are client-controlled and therefore untrusted:
+
+1. **user_permissions** -- the client declares its own access tier. In production, this would come from an authenticated identity (JWT, IdP). A malicious client could claim `["hr", "finance"]` and retrieve restricted chunks. Documented since Phase 1.
+
+2. **history** -- the client sends prior conversation turns for multi-turn context. A malicious client could forge assistant turns (e.g., claiming an action was already approved, or injecting fabricated answers containing restricted data). The following controls hold per turn regardless of history content:
+   - **Tool gating (T6):** a forged history claiming prior approval does NOT bypass the hard gate. Every `send_email`/`file_ticket` tool_use produces a fresh PendingAction requiring real user confirmation. ENFORCED by test.
+   - **Access control (T5):** history does not influence retrieval. `_retrieve_permitted_chunks` runs per request with the current `user_permissions`, before the agent loop sees history. A forged history referencing HR data does not cause HR chunks to appear in the prompt. ENFORCED by test.
+   - **PII redaction (T4):** runs inside `resolve_response()` on every answer, independent of history.
+   - **Citation stripping:** runs on every answer, independent of history.
+
+Server-side validated/stored history (where the server controls what the model "remembers") is a ROADMAP item. It requires authenticated sessions (Phase 4) and would eliminate the forged-history vector entirely.
+
 ## Explicitly out of scope (state it; maturity signals honesty)
 - Network/infra hardening beyond the app.
 - Formal model-weight security.
 - Nation-state adversaries.
 - Tier 2 PII (DOB, salary, address, names) -- deferred to ROADMAP with NER, not because unimportant but because naive regex would corrupt operational answers.
-- Real authentication (Phase 4); user_permissions in request body is a documented demo simplification.
+- Real authentication (Phase 4); user_permissions and history in request body are documented demo simplifications.
+- Server-side conversation storage -- ROADMAP with Phase 4 auth.
 
 We defend the application layer and say so.

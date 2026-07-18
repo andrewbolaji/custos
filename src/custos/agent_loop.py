@@ -99,16 +99,22 @@ class AgentLoop:
         self,
         prompt_parts: PromptParts,
         user_query: str,
+        *,
+        history: list[dict[str, Any]] | None = None,
     ) -> AgentResult:
         """Execute the agent loop synchronously.
 
         Returns the final AgentResult with text, citations, events,
         and tool results. Side-effectful tool calls are NOT executed;
         they produce a confirm_action event instead.
+
+        history: prior conversation turns (untrusted client input).
+        Prepended to the messages array for multi-turn context.
         """
         events: list[AgentEvent] = []
         tool_results: list[ToolResult] = []
         messages: list[dict[str, Any]] = [
+            *(history or []),
             {"role": "user", "content": user_query},
         ]
         tools = self._registry.to_claude_tools()
@@ -286,6 +292,7 @@ class AgentLoop:
         *,
         session_id: str = "",
         pending_store: PendingActionStore | None = None,
+        history: list[dict[str, Any]] | None = None,
     ) -> Generator[AgentEvent, None, None]:
         """Execute the agent loop, streaming text deltas from the final turn.
 
@@ -297,6 +304,9 @@ class AgentLoop:
         - "refused": if the answer is a refusal
         - "limit_hit": if bounds are exceeded
 
+        history: prior conversation turns (untrusted client input).
+        Prepended to the messages array for multi-turn context.
+
         Each turn uses messages.stream(). Text deltas are buffered per
         turn and only emitted if the turn ends without tool_use blocks.
         This prevents premature narration ("I'll send the email") from
@@ -306,6 +316,7 @@ class AgentLoop:
         """
         tool_results: list[ToolResult] = []
         messages: list[dict[str, Any]] = [
+            *(history or []),
             {"role": "user", "content": user_query},
         ]
         tools = self._registry.to_claude_tools()

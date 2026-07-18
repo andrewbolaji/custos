@@ -15,7 +15,7 @@
 
 import { useCallback, useMemo, useRef, useState } from "react";
 
-import { confirmAction, streamChat } from "../api";
+import { confirmAction, streamChat, type HistoryEntry } from "../api";
 import type {
   ChatState,
   Citation,
@@ -52,6 +52,8 @@ export function useChat(): UseChatReturn {
     null,
   );
   const assistantIdRef = useRef<string>("");
+  const messagesRef = useRef<Message[]>([]);
+  messagesRef.current = state.messages;
   // Stable session ID: generated once per hook mount (per browser session)
   const sessionId = useMemo(() => makeId(), []);
 
@@ -100,6 +102,13 @@ export function useChat(): UseChatReturn {
         status: "streaming",
         errorMessage: null,
       }));
+
+      // Build history from completed prior turns (last 10 messages).
+      // Uses messagesRef to avoid stale closure (sendMessage has [] deps).
+      const history: HistoryEntry[] = messagesRef.current
+        .filter((m) => m.content)
+        .map((m) => ({ role: m.role, content: m.content }))
+        .slice(-10);
 
       const controller = streamChat(query, permissions, sessionId, {
         onToken(text: string) {
@@ -179,7 +188,7 @@ export function useChat(): UseChatReturn {
                   : "idle",
           }));
         },
-      });
+      }, history);
 
       controllerRef.current = controller;
     },
