@@ -18,7 +18,8 @@ class TestHealthEndpoint:
     def test_health_returns_ok(self) -> None:
         response = client.get("/api/health")
         assert response.status_code == 200
-        assert response.json() == {"status": "ok"}
+        data = response.json()
+        assert data["status"] in ("ok", "degraded")
 
 
 class TestChatEndpointValidation:

@@ -90,6 +90,14 @@ class QdrantVectorStore(VectorStore):
         ]
         self._client.upsert(collection_name=self._collection, points=points)
 
+    def count(self) -> int:
+        """Return the number of points in the collection."""
+        try:
+            info = self._client.get_collection(self._collection)
+            return info.points_count or 0
+        except Exception:
+            return 0
+
     def query(
         self,
         vector: list[float],

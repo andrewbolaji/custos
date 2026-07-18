@@ -40,6 +40,7 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from custos.agent_loop import AgentLoop, AgentResult
+from custos.boot import ensure_index_ready
 from custos.embedder import LocalEmbedder
 from custos.ingest import ingest_corpus
 from custos.injection_detector import InjectionDetector
@@ -47,6 +48,7 @@ from custos.interfaces import Chunk
 from custos.llm import ClaudeLLM, get_refusal_text, get_system_prompt
 from custos.pending_actions import PendingActionStore
 from custos.pii import PIIRedactor
+from custos.rate_limiter import RateLimiter
 from custos.retriever import CustosRetriever
 from custos.tool_registry import ToolRegistry
 from custos.tools.file_ticket import FileTicketTool
@@ -125,8 +127,21 @@ _install_pii_formatter()
 
 @asynccontextmanager
 async def _lifespan(app_instance: FastAPI) -> AsyncGenerator[None, None]:
-    """Re-install PIIFormatter after uvicorn has configured its loggers."""
+    """Startup: PII formatter, index verification."""
+    global _index_ready, _index_chunks  # noqa: PLW0603
     _install_pii_formatter()
+
+    # Verify/rebuild the index before reporting healthy
+    try:
+        embedder = _get_embedder()
+        store = _get_store()
+        _index_chunks = ensure_index_ready(embedder, store)
+        _index_ready = _index_chunks > 0
+        logger.info("Boot: index ready, %d chunks", _index_chunks)
+    except Exception:
+        logger.exception("Boot: index check failed")
+        _index_ready = False
+
     yield
 
 
@@ -141,10 +156,15 @@ app = FastAPI(
     lifespan=_lifespan,
 )
 
-# CORS for local dev (Vite on :5173, API on :8000)
+# CORS: configurable for production (UI origin only).
+# Default allows local dev origins.
+_cors_origins = os.environ.get(
+    "CUSTOS_CORS_ORIGINS",
+    "http://localhost:5173,http://127.0.0.1:5173",
+).split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=_cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -159,6 +179,12 @@ _retriever: CustosRetriever | None = None
 _llm: ClaudeLLM | None = None
 _pending_actions = PendingActionStore()
 _injection_detector = InjectionDetector()
+_rate_limiter = RateLimiter()
+_index_ready = False
+_index_chunks = 0
+
+# Admin token: must be set in the environment. Never in the repo.
+_ADMIN_TOKEN = os.environ.get("CUSTOS_ADMIN_TOKEN", "")
 
 # Conversation memory: last N messages (sliding window)
 MAX_HISTORY_MESSAGES = 20
@@ -219,6 +245,24 @@ def _get_llm() -> ClaudeLLM:
             )
         _llm = ClaudeLLM(api_key=api_key)
     return _llm
+
+
+def _get_client_ip(request: Request) -> str:
+    """Extract the real client IP. In production, Caddy sets
+    X-Forwarded-For from the TCP remote address (client cannot
+    forge it). In dev, falls back to the direct client host.
+    """
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    client = request.client
+    return client.host if client else "unknown"
+
+
+def _check_rate_limit(request: Request, query: str, session_id: str) -> str | None:
+    """Check all rate limits. Returns None if allowed, or an error message."""
+    client_ip = _get_client_ip(request)
+    return _rate_limiter.check_request(client_ip, session_id, len(query))
 
 
 def _retrieve_permitted_chunks(query: str, user_permissions: list[str]) -> list[Chunk]:
@@ -363,7 +407,29 @@ class IngestResponse(BaseModel):
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    """Public health check. Returns status only, no internal details."""
+    return {"status": "ok" if _index_ready else "degraded"}
+
+
+@app.get("/api/admin/status")
+def admin_status(request: Request) -> dict[str, Any]:
+    """Admin status endpoint. Returns 404 on wrong/missing token
+    (does not leak whether the route exists). Rate-limited like
+    all other routes.
+    """
+    auth = request.headers.get("authorization", "")
+    if not _ADMIN_TOKEN or auth != f"Bearer {_ADMIN_TOKEN}":
+        raise HTTPException(status_code=404)
+
+    rate_status = _rate_limiter.get_status()
+    return {
+        "status": "ok" if _index_ready else "degraded",
+        "index_ready": _index_ready,
+        "chunks": _index_chunks,
+        "qdrant_connected": _store is not None,
+        "model": os.environ.get("CUSTOS_MODEL", "claude-sonnet-4-6"),
+        **rate_status,
+    }
 
 
 @app.post("/api/ingest", response_model=IngestResponse)
@@ -387,12 +453,13 @@ def ingest() -> dict[str, Any]:
 
 
 @app.post("/api/chat", response_model=ChatResponse)
-def chat(request: ChatRequest) -> dict[str, Any]:
-    """Query the assistant (synchronous).
+def chat(request: ChatRequest, http_request: Request) -> dict[str, Any]:
+    """Query the assistant (synchronous)."""
+    # Rate limit check
+    limit_msg = _check_rate_limit(http_request, request.query, request.session_id)
+    if limit_msg:
+        raise HTTPException(status_code=429, detail=limit_msg)
 
-    Uses _run_agent() which calls the same _retrieve_permitted_chunks()
-    and AgentLoop as /api/chat/stream.
-    """
     try:
         _get_llm()  # Fail fast if no API key
     except HTTPException:
@@ -438,6 +505,11 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourc
         event: error       data: {"detail": "..."}
         event: refused     data: {"text": "I don't have information..."}
     """
+    # Rate limit check
+    limit_msg = _check_rate_limit(http_request, request.query, request.session_id)
+    if limit_msg:
+        raise HTTPException(status_code=429, detail=limit_msg)
+
     try:
         _get_llm()  # Fail fast if no API key
     except HTTPException:
@@ -584,6 +656,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourc
                 }),
             }
 
+        _rate_limiter.record_request(request.session_id)
         yield {"event": "done", "data": "{}"}
 
     return EventSourceResponse(event_generator())

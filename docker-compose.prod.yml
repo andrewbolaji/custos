@@ -1,0 +1,47 @@
+# Production compose: API + Qdrant on a single VM.
+# Usage: docker compose -f docker-compose.prod.yml up -d
+#
+# Secrets: set ANTHROPIC_API_KEY and CUSTOS_ADMIN_TOKEN in ~/.env
+# on the host. They never appear in this file or in the repo.
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.18.0
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__GRPC_PORT: 6334
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  api:
+    build: .
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: custos
+    env_file:
+      - ${HOME}/.env
+    ports:
+      - "127.0.0.1:8000:8000"
+    restart: unless-stopped
+    volumes:
+      - app_data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c",
+        "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+
+volumes:
+  qdrant_data:
+  app_data:

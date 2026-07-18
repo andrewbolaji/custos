@@ -1,0 +1,13 @@
+.git
+.venv
+__pycache__
+*.pyc
+.env
+.env.local
+node_modules
+ui/node_modules
+ui/dist
+ui/design-reference
+*.egg-info
+dist
+build
