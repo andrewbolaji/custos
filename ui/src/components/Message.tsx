@@ -66,9 +66,9 @@ export function Message({ message, isStreaming, onApprove, onReject }: MessagePr
             ))}
             <span className="scoped-tag" tabIndex={0}>
               <ShieldIcon size={11} stroke="#11996b" strokeWidth={2.4} />
-              Access group: General
+              Access: General
               <span className="tooltip">
-                This answer used only documents your access group is permitted to see.
+                This answer used only documents your access level is permitted to see.
               </span>
             </span>
           </div>

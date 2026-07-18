@@ -17,9 +17,9 @@ export function Header() {
           <span className="dot" />
           general access
         </span>
-        <span className="pill scoped" title="This answer used only documents your access group is permitted to see.">
+        <span className="pill scoped" title="This answer used only documents your access level is permitted to see.">
           <ShieldIcon size={11} stroke="#11996b" strokeWidth={2.4} />
-          Access group: General
+          Access: General
         </span>
       </div>
     </div>
