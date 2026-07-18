@@ -28,9 +28,18 @@ logger = logging.getLogger(__name__)
 
 DAILY_CAP = int(os.environ.get("CUSTOS_DAILY_CAP", "150"))
 MONTHLY_CAP = int(os.environ.get("CUSTOS_MONTHLY_CAP", "4000"))
-SESSION_QUOTA = int(os.environ.get("CUSTOS_SESSION_QUOTA", "20"))
+# Session quota is not a cost control (the daily and monthly caps are).
+# Its purpose is preventing a single visitor from consuming the whole day.
+# At a 150/day cap, 25 limits any one session to roughly a sixth of the
+# day, while allowing a full evaluation of every security control plus
+# room for the visitor's own questions.
+SESSION_QUOTA = int(os.environ.get("CUSTOS_SESSION_QUOTA", "25"))
 RATE_PER_MIN = int(os.environ.get("CUSTOS_RATE_PER_MIN", "8"))
 MAX_QUERY_LEN = int(os.environ.get("CUSTOS_MAX_QUERY_LEN", "500"))
+# Optional contact line appended to the session-quota message.
+# Set via env var so it can be adjusted without a rebuild.
+# Unset = no contact line.
+CONTACT_LINE = os.environ.get("CUSTOS_CONTACT_LINE", "")
 
 # Per-query cost estimate (Sonnet: $3/MTok input, $15/MTok output)
 EST_INPUT_TOKENS = 4050
@@ -186,10 +195,15 @@ class RateLimiter:
             # Per-session quota
             count = self._session_counts.get(session_id, 0)
             if count >= SESSION_QUOTA:
-                return (
+                msg = (
                     f"You have used all {SESSION_QUOTA} questions in this session. "
-                    "Reload the page to start a new session."
+                    "Reload the page to continue"
                 )
+                if CONTACT_LINE:
+                    msg += f", or {CONTACT_LINE}."
+                else:
+                    msg += "."
+                return msg
 
             return None
 

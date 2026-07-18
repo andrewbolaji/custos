@@ -78,6 +78,24 @@ brew install gitleaks    # one-time
 
 The `.gitleaks.toml` config allowlists the corpus directory only (which contains intentionally fake PII using reserved ranges). The scanner stays live on application code, tests, and evals.
 
+## Configuration
+
+All limits are configurable via environment variables, adjustable without a rebuild.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `CUSTOS_DAILY_CAP` | 150 | Daily query cap (spike/abuse protection) |
+| `CUSTOS_MONTHLY_CAP` | 4000 | Monthly query cap (budget protection, the real control) |
+| `CUSTOS_SESSION_QUOTA` | 25 | Per-session query limit. Not a cost control (the caps are). Prevents one visitor from consuming the whole day. At 150/day, 25 is roughly a sixth. |
+| `CUSTOS_RATE_PER_MIN` | 8 | Per-IP requests per minute |
+| `CUSTOS_MAX_QUERY_LEN` | 500 | Maximum query length in characters |
+| `CUSTOS_CONTACT_LINE` | (unset) | Contact line appended to the session-quota message, e.g. "get in touch at andrew@example.com for a full walkthrough". Unset = no contact line. |
+| `CUSTOS_ADMIN_TOKEN` | (required) | Bearer token for the admin status endpoint |
+| `CUSTOS_CORS_ORIGINS` | localhost dev origins | Comma-separated allowed CORS origins |
+| `CUSTOS_TRUST_PROXY` | off | Trust X-Forwarded-For (set to 1 behind Caddy in production) |
+| `CUSTOS_MODEL` | claude-sonnet-4-6 | Anthropic model ID |
+| `ANTHROPIC_API_KEY` | (required) | Anthropic API key. Read from environment only, never in the repo. |
+
 ## Demo corpus
 
 A byte-reproducible set of documents for **Meridian Home Services**, a fictional HVAC/plumbing/electrical company. Pinned seed and reference date produce identical output on every run. Includes:
