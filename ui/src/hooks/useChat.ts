@@ -65,33 +65,36 @@ export function useChat(): UseChatReturn {
   const sessionId = useMemo(() => makeId(), []);
 
   // Streaming buffer: tokens accumulate in pendingRef at SSE speed.
-  // A rAF loop drains them at a constant pace into shownRef, committing
-  // to React state at ~30fps. The rate is identical at start, middle,
-  // and end of every answer: no adaptive catch-up, no acceleration.
+  // A rAF loop reveals them at a time-based pace (frame-rate independent),
+  // committing to React state at ~30fps. The rate is identical regardless
+  // of frame timing: chars_shown = elapsed_ms * CHARS_PER_SEC / 1000.
   const pendingRef = useRef("");     // full received text
   const shownRef = useRef(0);        // how many chars revealed so far
   const rafRef = useRef<number | null>(null);
   const lastCommitRef = useRef(0);   // last setState timestamp
-  // Perceptual tuning knob: lower = slower reveal. ~120 chars/sec at 60fps.
-  const CHARS_PER_FRAME = 2;
+  const drainStartRef = useRef(0);   // when the drain started (performance.now)
+  const drainBaseRef = useRef(0);    // shownRef value when drain started
+  // Perceptual tuning knob: characters per second. Frame-rate independent.
+  const CHARS_PER_SEC = 50;
   const COMMIT_INTERVAL = 33;        // ~30fps
 
   const startStreamSync = useCallback(() => {
-    // Always cancel any in-flight loop and start fresh.
     if (rafRef.current !== null) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     }
+    drainStartRef.current = performance.now();
+    drainBaseRef.current = shownRef.current;
+
     const drain = () => {
       const pending = pendingRef.current;
-      const shown = shownRef.current;
+      const elapsed = performance.now() - drainStartRef.current;
+      const target = drainBaseRef.current + Math.floor(elapsed * CHARS_PER_SEC / 1000);
+      const next = Math.min(target, pending.length);
 
-      if (shown < pending.length) {
-        const next = Math.min(shown + CHARS_PER_FRAME, pending.length);
+      if (next > shownRef.current) {
         shownRef.current = next;
 
-        // Throttle React commits to ~30fps, but always commit when
-        // the drain catches up (ensures final state is flushed).
         const now = performance.now();
         if (now - lastCommitRef.current >= COMMIT_INTERVAL || next >= pending.length) {
           lastCommitRef.current = now;
@@ -120,18 +123,23 @@ export function useChat(): UseChatReturn {
     }
   }, []);
 
-  // Completion drain: let the remaining buffer finish revealing at
-  // the same constant rate instead of snapping. Used by onDone only.
+  // Completion drain: continue revealing at the same time-based rate.
+  // Used by onDone only. Resets the drain clock from the current position.
   const finishStreamDrain = useCallback(() => {
     if (rafRef.current !== null) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     }
+    drainStartRef.current = performance.now();
+    drainBaseRef.current = shownRef.current;
+
     const drainRemaining = () => {
       const pending = pendingRef.current;
-      const shown = shownRef.current;
-      if (shown < pending.length) {
-        const next = Math.min(shown + CHARS_PER_FRAME, pending.length);
+      const elapsed = performance.now() - drainStartRef.current;
+      const target = drainBaseRef.current + Math.floor(elapsed * CHARS_PER_SEC / 1000);
+      const next = Math.min(target, pending.length);
+
+      if (next > shownRef.current) {
         shownRef.current = next;
         const content = pending.slice(0, next);
         const id = assistantIdRef.current;
@@ -141,6 +149,9 @@ export function useChat(): UseChatReturn {
             m.id === id ? { ...m, content } : m,
           ),
         }));
+      }
+
+      if (shownRef.current < pending.length) {
         rafRef.current = requestAnimationFrame(drainRemaining);
       } else {
         rafRef.current = null;

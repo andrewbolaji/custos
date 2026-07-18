@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -6,6 +7,7 @@ import remarkGfm from "remark-gfm";
 const gfmOptions = { singleTilde: false };
 
 import type { Message as MessageType } from "../types";
+import { trimIncompleteBlocks } from "../utils/trimIncompleteBlocks";
 
 import { Citation } from "./Citation";
 import { ConfirmationCard } from "./ConfirmationCard";
@@ -35,6 +37,35 @@ const TOOL_LABELS: Record<string, string> = {
   file_ticket: "File ticket",
 };
 
+/**
+ * Memoized markdown renderer. During streaming, incomplete block-level
+ * structures (partial tables, unclosed code fences) are withheld to
+ * prevent the flash where pipes render as text then snap into a table.
+ */
+function MemoMarkdown({ content, isStreaming }: { content: string; isStreaming: boolean }) {
+  const displayText = useMemo(
+    () => (isStreaming ? trimIncompleteBlocks(content) : content),
+    [content, isStreaming],
+  );
+
+  return (
+    <>
+      <ReactMarkdown
+        remarkPlugins={[[remarkGfm, gfmOptions]]}
+        components={{
+          a: ({ children }) => <span>{children}</span>,
+          table: ({ children }) => (
+            <div className="table-wrap"><table>{children}</table></div>
+          ),
+        }}
+      >
+        {displayText}
+      </ReactMarkdown>
+      {isStreaming && <span className="typing-cursor" />}
+    </>
+  );
+}
+
 interface MessageProps {
   message: MessageType;
   isStreaming: boolean;
@@ -60,20 +91,7 @@ export function Message({ message, isStreaming, onApprove, onReject }: MessagePr
       </div>
       <div className="bubble-assistant">
         <div className="md-content">
-          <ReactMarkdown
-            remarkPlugins={[[remarkGfm, gfmOptions]]}
-            components={{
-              // Render links as plain text (no clickable links from untrusted content)
-              a: ({ children }) => <span>{children}</span>,
-              // Wrap tables in a scrollable container
-              table: ({ children }) => (
-                <div className="table-wrap"><table>{children}</table></div>
-              ),
-            }}
-          >
-            {message.content}
-          </ReactMarkdown>
-          {isStreaming && <span className="typing-cursor" />}
+          <MemoMarkdown content={message.content} isStreaming={isStreaming} />
         </div>
         {message.refused && (
           <p className="message-refused">

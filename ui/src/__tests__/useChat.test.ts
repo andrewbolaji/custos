@@ -311,9 +311,9 @@ describe("useChat: reconciliation", () => {
       lastCallbacks!.onToken("Answer with [chunk_id_123] artifact.");
     });
 
-    // Let the drain reveal all the text
+    // Let the drain reveal all the text (50 chars/sec, 36 chars = ~720ms)
     await act(async () => {
-      await new Promise((r) => setTimeout(r, 500));
+      await new Promise((r) => setTimeout(r, 1000));
     });
 
     // Reconciliation: resolve_response stripped the artifact (shorter text)
