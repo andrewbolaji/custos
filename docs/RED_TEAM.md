@@ -50,7 +50,7 @@ Each finding states what the eval actually asserts, not more:
 
 **Control:** Heuristic detection + span-level sanitization (first layer). Untrusted-data wrapping + side-effectful tool gating (second layer, structural). The two layers are complementary: detection catches known patterns; prevention catches everything else.
 
-**Eval:** Detection: `injection.py` (3 seeded + 1 clean). Prevention: `action_gating.py` `injection_cannot_cause_execution`.
+**Eval:** Detection: `injection.py` (3 seeded payloads + real corpus false-positive scan + real retrieval path test via `_retrieve_and_scan`). Prevention: `action_gating.py` `injection_cannot_cause_execution`.
 
 **Status:** ENFORCED (detection) + RED-TEAMED (prevention). The headline is unchanged: even when detection misses, the gate holds.
 

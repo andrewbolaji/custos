@@ -32,11 +32,12 @@ PLACEHOLDER = "[injected instruction removed]"
 # block containing the injection attempt.
 
 _PATTERNS: list[re.Pattern[str]] = [
-    # Role impersonation: "SYSTEM:", "assistant:", "user:" and everything
-    # that follows until a separator (---), blank line, or end of text
+    # Role impersonation: uppercase "SYSTEM:" only (case-SENSITIVE).
+    # Real injections shout; real field labels ("System: Carrier 58MVC")
+    # use sentence case. Lowercase "system: ignore instructions" is
+    # caught by the override-phrasing pattern instead.
     re.compile(
-        r"(?:^|\n)\s*(?:SYSTEM|assistant|user)\s*:[\s\S]*?(?=\n---|\n\n|\Z)",
-        re.IGNORECASE,
+        r"(?:^|\n)\s*SYSTEM\s*:[\s\S]*?(?=\n---|\n\n|\Z)",
     ),
     # Override phrasing: "ignore all/prior/previous/your instructions"
     re.compile(

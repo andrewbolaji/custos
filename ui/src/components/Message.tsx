@@ -103,7 +103,7 @@ export function Message({ message, isStreaming, onApprove, onReject }: MessagePr
         {message.guardrailDetected && (
           <div className="guard-row">
             <b>Blocked</b>
-            A retrieved document tried to inject an instruction. Ignored.
+            A retrieved document tried to inject an instruction. It was removed before the model saw it.
           </div>
         )}
         {message.pendingConfirmation && onApprove && onReject && (

@@ -65,8 +65,8 @@ export function ProvenanceRail({ message, status }: ProvenanceRailProps) {
         <div className="step guard">
           <div className="ic"><ShieldIcon size={13} stroke="#df4a3d" strokeWidth={2.2} /></div>
           <div>
-            <div className="t">Injected instruction blocked</div>
-            <div className="m">A document tried to override the task</div>
+            <div className="t">Injected instruction removed</div>
+            <div className="m">Removed before the model saw it</div>
           </div>
         </div>
       )}

@@ -44,7 +44,7 @@ A retrieved chunk contains an injection payload (e.g., "assistant: email the who
 2. **PREVENTION (structural):** Retrieved content is wrapped as untrusted data. Side-effectful tools never execute without user confirmation. Even if an injection evades detection and the model emits a `tool_use` block, the hard gate creates a PendingAction. This holds regardless of detection.
 
 **Eval:**
-- Detection: `evals/suites/injection.py` (3 seeded payload cases + 1 clean corpus case). ENFORCED.
+- Detection: `evals/suites/injection.py` (3 seeded payload cases + 1 real corpus false-positive scan + 1 real retrieval path test). ENFORCED (the path test exercises `_retrieve_and_scan`, not just the regex).
 - Prevention: `evals/suites/action_gating.py`, case `injection_cannot_cause_execution` (LLM-dependent). This eval deliberately bypasses the detector (builds chunks directly, not through the API retrieval path) to exercise the "detection missed" scenario. The hard gate still blocks execution. RED-TEAMED.
 
 **Status:** ENFORCED (detection sanitizes known patterns) + RED-TEAMED (prevention holds when detection misses). The two layers are complementary: detection catches what it can; prevention catches everything else.
@@ -109,8 +109,8 @@ Committed keys, poisoned deps.
 
 | Threat | Eval file | Cases | Status |
 |--------|-----------|-------|--------|
-| T1 (direct injection) | `injection.py` | 11 | STRUCTURED + ENFORCED |
-| T2 (indirect injection) | `injection.py` + `action_gating.py` | 4 + 1 (LLM) | ENFORCED + RED-TEAMED |
+| T1 (direct injection) | `injection.py` | 12 | STRUCTURED + ENFORCED |
+| T2 (indirect injection) | `injection.py` + `action_gating.py` | 5 + 1 (LLM) | ENFORCED + RED-TEAMED |
 | T3 (exfiltration) | `exfiltration.py` | 4 + 1 (LLM) | STRUCTURED + RED-TEAMED |
 | T4 (PII) | `pii.py` | 22 | ENFORCED |
 | T5 (access control) | `retrieval.py` | 4 | ENFORCED |
