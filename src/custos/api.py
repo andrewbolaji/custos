@@ -33,6 +33,7 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict
 from typing import Any
 
+import anthropic
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -417,6 +418,10 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourc
                 pending_store=_pending_actions,
             )
             for event in stream_iter:
+                # Stop streaming if the client disconnected
+                if await http_request.is_disconnected():
+                    logger.info("Client disconnected, stopping stream")
+                    break
                 if event.kind == "text_delta":
                     yield {
                         "event": "token",
@@ -467,11 +472,29 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourc
                             "detail": "Request exceeded processing limits.",
                         }),
                     }
+        except anthropic.APITimeoutError:
+            logger.warning("Anthropic API timed out for query: %s", request.query[:50])
+            yield {
+                "event": "error",
+                "data": json.dumps({
+                    "detail": "The service timed out. Please try again.",
+                }),
+            }
+        except anthropic.APIConnectionError:
+            logger.warning("Anthropic API connection failed for query: %s", request.query[:50])
+            yield {
+                "event": "error",
+                "data": json.dumps({
+                    "detail": "Could not connect to the AI service. Please try again.",
+                }),
+            }
         except Exception:
             logger.exception("Agent loop failed")
             yield {
                 "event": "error",
-                "data": json.dumps({"detail": "Chat request failed. See server logs."}),
+                "data": json.dumps({
+                    "detail": "Something went wrong. Please try again.",
+                }),
             }
 
         yield {"event": "done", "data": "{}"}

@@ -290,7 +290,7 @@ body {
 
 .bubble-assistant {
   background: var(--surface);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-2);
   border-radius: var(--r-tail) var(--r-bubble) var(--r-bubble) var(--r-bubble);
   padding: 14px 17px;
   max-width: 80%;

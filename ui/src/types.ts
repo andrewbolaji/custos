@@ -40,6 +40,7 @@ export interface Message {
   toolUses: ToolUseEvent[];
   pendingConfirmation: PendingConfirmation | null;
   timestamp: number;
+  permissions?: string[];
 }
 
 /**

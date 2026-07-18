@@ -35,7 +35,7 @@
 
 :root {
   /* --- Surfaces --- */
-  --bg: #f2efe8;
+  --bg: #e9e4d9;
   --surface: #ffffff;
   --surface-2: #faf8f3;
 
@@ -89,7 +89,7 @@
   --r-full: 9999px;
 
   /* --- Shadows --- */
-  --shadow-bubble: 0 3px 12px rgba(30, 25, 10, 0.05);
+  --shadow-bubble: 0 3px 14px rgba(30, 25, 10, 0.09);
   --shadow-user: 0 2px 8px rgba(43, 87, 224, 0.22);
   --shadow-input: 0 2px 10px rgba(30, 25, 10, 0.04);
 

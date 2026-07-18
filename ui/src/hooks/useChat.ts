@@ -83,6 +83,7 @@ export function useChat(): UseChatReturn {
         toolUses: [],
         pendingConfirmation: null,
         timestamp: Date.now(),
+        permissions,
       };
 
       setState((prev) => ({
@@ -161,6 +162,10 @@ export function useChat(): UseChatReturn {
             ...prev,
             status: "error",
             errorMessage: detail,
+            // Remove empty assistant bubble so it doesn't float next to the error banner
+            messages: prev.messages.filter(
+              (m) => !(m.id === assistantId && m.role === "assistant" && !m.content),
+            ),
           }));
         },
         onDone() {

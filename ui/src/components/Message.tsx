@@ -1,11 +1,31 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+// Disable GFM autolink: answer text derives from untrusted documents,
+// so emails/URLs must render as plain text, not clickable links.
+const gfmOptions = { singleTilde: false };
+
 import type { Message as MessageType } from "../types";
 
 import { Citation } from "./Citation";
 import { ConfirmationCard } from "./ConfirmationCard";
 import { ShieldIcon } from "./ShieldIcon";
+
+const PERMISSION_LABELS: Record<string, string> = {
+  general: "Standard",
+  hr: "HR",
+  finance: "Finance",
+  admin: "Admin",
+};
+
+function getAccessLabel(permissions?: string[]): string {
+  if (!permissions || permissions.length === 0) return "Standard";
+  // Use the highest-privilege permission for the label
+  for (const p of ["admin", "finance", "hr"]) {
+    if (permissions.includes(p)) return PERMISSION_LABELS[p] ?? p;
+  }
+  return PERMISSION_LABELS[permissions[0]] ?? "Standard";
+}
 
 const TOOL_LABELS: Record<string, string> = {
   search_documents: "Searched documents",
@@ -39,7 +59,13 @@ export function Message({ message, isStreaming, onApprove, onReject }: MessagePr
       </div>
       <div className="bubble-assistant">
         <div className="md-content">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+          <ReactMarkdown
+            remarkPlugins={[[remarkGfm, gfmOptions]]}
+            components={{
+              // Render links as plain text (no clickable links from untrusted content)
+              a: ({ children }) => <span>{children}</span>,
+            }}
+          >
             {message.content}
           </ReactMarkdown>
           {isStreaming && <span className="typing-cursor" />}
@@ -66,7 +92,7 @@ export function Message({ message, isStreaming, onApprove, onReject }: MessagePr
             ))}
             <span className="scoped-tag" tabIndex={0}>
               <ShieldIcon size={11} stroke="#11996b" strokeWidth={2.4} />
-              Access: General
+              Access: {getAccessLabel(message.permissions)}
               <span className="tooltip">
                 This answer used only documents your access level is permitted to see.
               </span>
