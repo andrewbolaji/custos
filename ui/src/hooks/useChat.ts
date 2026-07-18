@@ -214,10 +214,20 @@ export function useChat(): UseChatReturn {
           pendingRef.current += text;
         },
         onTextReplace(text: string) {
-          // Reconciliation: update pending but let the drain continue
-          // at the constant rate. Do NOT jump shownRef to text.length;
-          // that would snap the answer to complete and read as racing.
+          // Reconciliation: update pending, clamp shown to the new
+          // length (if the corrected text is shorter, e.g. artifact
+          // stripped), and commit the visible prefix immediately so
+          // the correction is rendered. The drain continues normally
+          // for any remaining characters.
           pendingRef.current = text;
+          shownRef.current = Math.min(shownRef.current, text.length);
+          const visible = text.slice(0, shownRef.current);
+          setState((prev) => ({
+            ...prev,
+            messages: prev.messages.map((m) =>
+              m.id === assistantId ? { ...m, content: visible } : m,
+            ),
+          }));
         },
         onCitations(citations: Citation[]) {
           setState((prev) => ({

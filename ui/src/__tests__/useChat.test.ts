@@ -288,6 +288,48 @@ describe("useChat: never-stuck invariant", () => {
   });
 });
 
+describe("useChat: reconciliation", () => {
+  beforeEach(() => {
+    lastCallbacks = null;
+    lastController = null;
+    confirmActionCalls = [];
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("text_replace that shortens text corrects the displayed content", async () => {
+    const { result } = renderHook(() => useChat());
+
+    act(() => {
+      result.current.sendMessage("test");
+    });
+
+    // Simulate tokens arriving (including an artifact)
+    act(() => {
+      lastCallbacks!.onToken("Answer with [chunk_id_123] artifact.");
+    });
+
+    // Let the drain reveal all the text
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 500));
+    });
+
+    // Reconciliation: resolve_response stripped the artifact (shorter text)
+    act(() => {
+      lastCallbacks!.onTextReplace("Answer with artifact.");
+    });
+
+    // The corrected (shorter) text must be displayed immediately.
+    // shownRef was clamped and the visible prefix committed.
+    const msg = result.current.state.messages[1];
+    expect(msg.content).not.toContain("[chunk_id_123]");
+    // Content should be at most the corrected text
+    expect(msg.content.length).toBeLessThanOrEqual("Answer with artifact.".length);
+  });
+});
+
 describe("useChat: confirmation flow", () => {
   beforeEach(() => {
     lastCallbacks = null;
