@@ -231,6 +231,39 @@ class TestApiCallCounting:
         # Should not raise
         llm.notify_api_call()
 
+    def test_api_llm_has_recorder_attached(self) -> None:
+        """The LLM instance the API constructs must have the recorder
+        wired. If _get_llm drops the on_api_call argument, this fails.
+        """
+        import os
+        from unittest.mock import patch
+
+        import custos.api as api_mod
+
+        # Reset the cached LLM so _get_llm constructs a fresh one
+        original_llm = api_mod._llm
+        api_mod._llm = None
+        try:
+            # Need an API key to construct the LLM
+            with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test-fake"}):
+                llm = api_mod._get_llm()
+
+            # The callback must be attached
+            assert llm._on_api_call is not None, (
+                "_get_llm() constructed a ClaudeLLM without on_api_call. "
+                "Budget control is silently disabled."
+            )
+
+            # Invoking it must increment the rate limiter
+            before = api_mod._rate_limiter.get_status()["requests_today"]
+            llm.notify_api_call()
+            after = api_mod._rate_limiter.get_status()["requests_today"]
+            assert after == before + 1, (
+                "notify_api_call did not increment the rate limiter"
+            )
+        finally:
+            api_mod._llm = original_llm
+
 
 class TestAdminEndpoint:
     def test_admin_returns_404_without_token(self) -> None:

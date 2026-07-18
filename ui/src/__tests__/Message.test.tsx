@@ -107,9 +107,16 @@ describe("Message rendering", () => {
   });
 
   it("rate limit message renders without the 'could not find' line", () => {
+    // Simulate the real bug path: a rate-limited message could have
+    // refused=true set (if routed through onRefused). The guard must
+    // prevent the "could not find" line from rendering alongside the
+    // limit message.
     const msg = makeAssistantMsg(
       "This demo has reached its daily usage limit.",
-      { rateLimitMessage: "This demo has reached its daily usage limit." },
+      {
+        rateLimitMessage: "This demo has reached its daily usage limit.",
+        refused: true,  // would trigger the "could not find" line without the guard
+      },
     );
     const { container } = render(
       <Message message={msg} isStreaming={false} />,
