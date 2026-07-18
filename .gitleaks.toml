@@ -1,0 +1,26 @@
+# Gitleaks configuration for Custos.
+#
+# The demo corpus contains intentionally fake PII for testing security
+# controls. These values are safe by construction and must not trip the
+# scanner. Allowlists are path-scoped (never repository-wide) so the
+# scanner stays live everywhere else.
+
+[allowlist]
+
+  # The corpus and eval directories contain synthetic PII:
+  #
+  # SSNs: 900-series numbers are in a range the Social Security
+  # Administration has never issued. They cannot correspond to a
+  # real person. (See corpus/generate.py, ReservedPII class.)
+  #
+  # Emails: example.org and example.com are RFC 2606 reserved
+  # domains. No real mailbox exists at these addresses.
+  #
+  # Phones: 555-0100 through 555-0199 are ITU-T E.123 fictional
+  # range numbers reserved for use in fiction and testing.
+
+  paths = [
+    '''corpus/.*''',
+    '''evals/.*''',
+    '''tests/.*''',
+  ]

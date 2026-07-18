@@ -67,6 +67,17 @@ make evals
 make check
 ```
 
+## Secret scanning
+
+A pre-commit hook runs `gitleaks protect --staged` on every commit. To install:
+
+```bash
+brew install gitleaks    # one-time
+# The hook is already at .git/hooks/pre-commit
+```
+
+The `.gitleaks.toml` config allowlists the corpus, eval, and test directories (which contain intentionally fake PII using reserved ranges). The scanner stays live on all application code.
+
 ## Demo corpus
 
 A byte-reproducible set of documents for **Meridian Home Services**, a fictional HVAC/plumbing/electrical company. Pinned seed and reference date produce identical output on every run. Includes:
@@ -81,7 +92,6 @@ All PII is synthetic and uses reserved/invalid ranges. See `corpus/output/manife
 
 | Document | What it covers |
 |----------|---------------|
-| `PROJECT_BRIEF.md` | What Custos is, the phases, success criteria |
 | `ARCHITECTURE.md` | RAG + agent + security architecture |
 | `THREAT_MODEL.md` | Eight threats, their controls, and the evals that prove them |
 | `EVALS.md` | How we prove retrieval, injection resistance, PII handling, access control |
