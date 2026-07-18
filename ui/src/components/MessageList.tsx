@@ -17,10 +17,9 @@ export function MessageList({ messages, status, onApprove, onReject }: MessageLi
   const [following, setFollowing] = useState(true);
   const lastScrollTopRef = useRef(0);
   const programmaticScrollRef = useRef(false);
+  const prevMsgCountRef = useRef(messages.length);
 
   // Detect genuine user scroll-up by tracking scroll DIRECTION.
-  // programmatic scrollTop changes (from the follow effect) are
-  // flagged so they don't trigger user-scrolled detection.
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -29,7 +28,6 @@ export function MessageList({ messages, status, onApprove, onReject }: MessageLi
     const prev = lastScrollTopRef.current;
     lastScrollTopRef.current = current;
 
-    // Skip programmatic scroll events
     if (programmaticScrollRef.current) {
       programmaticScrollRef.current = false;
       return;
@@ -57,14 +55,19 @@ export function MessageList({ messages, status, onApprove, onReject }: MessageLi
     }
   }, []);
 
-  // Re-enable following when streaming stops
+  // Reset following when a NEW USER MESSAGE is added.
+  // That is an unambiguous signal: they want to watch the new answer.
   useEffect(() => {
-    if (status !== "streaming") {
-      setFollowing(true);
+    if (messages.length > prevMsgCountRef.current) {
+      const last = messages[messages.length - 1];
+      if (last?.role === "user") {
+        setFollowing(true);
+      }
     }
-  }, [status]);
+    prevMsgCountRef.current = messages.length;
+  }, [messages.length]);
 
-  // Follow bottom during streaming
+  // Follow bottom while following is true
   useEffect(() => {
     if (!following) return;
     const el = scrollRef.current;
@@ -111,7 +114,7 @@ export function MessageList({ messages, status, onApprove, onReject }: MessageLi
         ))}
         <div ref={endRef} />
       </div>
-      {!following && status === "streaming" && (
+      {!following && (
         <button
           className="jump-btn"
           onClick={jumpToLatest}
