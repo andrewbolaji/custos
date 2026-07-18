@@ -1,0 +1,12 @@
+# Security headers for the Custos UI (served by Cloudflare Pages).
+#
+# frame-ancestors: deliberately restrictive. The demo can be embedded
+# only by the marketing site and nowhere else. Without this, any site
+# can iframe the demo and burn Andrew's API budget under their branding.
+# Replace EMBED_DOMAIN_PLACEHOLDER with the actual marketing domain(s).
+
+/*
+  Content-Security-Policy: frame-ancestors 'self' EMBED_DOMAIN_PLACEHOLDER
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=()

@@ -133,13 +133,29 @@ VITE_API_URL=https://api.YOUR_DOMAIN npm run build
    every 5 minutes. Alert on downtime.
 
 2. **Budget alert** (cron on the VM):
+
+   The script `scripts/budget-alert.sh` queries the admin endpoint,
+   checks monthly usage percentage, and posts to an ntfy.sh topic
+   when 50% or 80% is first crossed. It does not re-alert on every
+   run; state resets on month rollover.
+
    ```bash
-   # Add to crontab: check cost daily, alert via ntfy.sh at 80%.
-   0 9 * * * curl -s -H "Authorization: Bearer PASTE_SECRET_HERE" \
-     https://api.YOUR_DOMAIN/api/admin/status \
-     | python3 -c "import sys,json; d=json.load(sys.stdin); pct=d['pct_monthly_used']; print(f'{pct}%'); exit(0 if pct<80 else 1)" \
-     || curl -d "Custos monthly usage at $(date): check admin/status" ntfy.sh/YOUR_TOPIC
+   # Create a config file for the cron environment:
+   cat > ~/.custos-alert-env << 'ENVEOF'
+   CUSTOS_ADMIN_URL=https://api.YOUR_DOMAIN/api/admin/status
+   CUSTOS_ADMIN_TOKEN=PASTE_SECRET_HERE
+   NTFY_TOPIC=YOUR_NTFY_TOPIC
+   ENVEOF
+   chmod 600 ~/.custos-alert-env
+
+   # Add to crontab (runs every 6 hours):
+   crontab -e
+   # Paste this line:
+   0 */6 * * * . ~/.custos-alert-env && ~/custos/scripts/budget-alert.sh
    ```
+
+   Set YOUR_NTFY_TOPIC to a private topic on ntfy.sh (free, no signup).
+   Subscribe on your phone to receive push notifications.
 
 ## 12. Walk the demo
 

@@ -97,6 +97,10 @@ The frontend reads the API origin from `VITE_API_URL` at build time:
 VITE_API_URL=https://api.your-domain.com npm run build
 ```
 
+## Embed policy
+
+The UI serves a `Content-Security-Policy: frame-ancestors` header that restricts which sites can embed the demo in an iframe. This is deliberately restrictive: without it, any site can iframe the demo and burn the daily API budget under their own branding. The allowlist is in `ui/public/_headers` (replace `EMBED_DOMAIN_PLACEHOLDER` with the actual marketing domain).
+
 Default (unset): `http://127.0.0.1:8000` (local dev).
 
 ## Configuration
