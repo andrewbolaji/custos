@@ -450,6 +450,13 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourc
 
     async def event_generator() -> AsyncGenerator[dict[str, str], None]:
         llm = _get_llm()
+
+        # Milestone 1: retrieval + injection scan
+        yield {
+            "event": "status",
+            "data": json.dumps({"text": "Searching documents"}),
+        }
+
         chunks, injection_detected = _retrieve_and_scan(
             request.query, request.user_permissions
         )
@@ -461,6 +468,14 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourc
             }
             yield {"event": "done", "data": "{}"}
             return
+
+        # Milestone 2: retrieval complete, report real count
+        yield {
+            "event": "status",
+            "data": json.dumps({
+                "text": f"Reading {len(chunks)} excerpt{'s' if len(chunks) != 1 else ''}",
+            }),
+        }
 
         # Emit guardrail event if injection was detected and sanitized
         if injection_detected:

@@ -42,6 +42,7 @@ export interface Message {
   timestamp: number;
   permissions?: string[];
   guardrailDetected?: boolean;
+  statusText?: string;
 }
 
 /**

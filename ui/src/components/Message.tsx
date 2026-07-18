@@ -123,7 +123,14 @@ export function Message({ message, isStreaming, onApprove, onReject }: MessagePr
         <Logo size={18} variant="small" />
       </div>
       <div className="bubble-assistant">
-        <MdContainer content={message.content} isStreaming={isStreaming} />
+        {message.statusText && !message.content ? (
+          <div className="status-indicator">
+            <span className="status-pulse" />
+            <span className="status-text">{message.statusText}</span>
+          </div>
+        ) : (
+          <MdContainer content={message.content} isStreaming={isStreaming} />
+        )}
         {message.refused && (
           <p className="message-refused">
             The assistant could not find relevant information in the available documents.

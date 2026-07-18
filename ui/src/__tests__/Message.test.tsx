@@ -55,6 +55,55 @@ describe("Message rendering", () => {
     expect(container.textContent).toContain("test@example.com");
   });
 
+  it("shows status indicator when statusText is set and no content", () => {
+    const msg = makeAssistantMsg("", { statusText: "Reading 5 excerpts" });
+    render(<Message message={msg} isStreaming={true} />);
+
+    expect(screen.getByText("Reading 5 excerpts")).toBeDefined();
+    // The pulse element should be present
+    const pulse = document.querySelector(".status-pulse");
+    expect(pulse).not.toBeNull();
+  });
+
+  it("status clears when content arrives", () => {
+    const msg = makeAssistantMsg("The answer is here.", {
+      statusText: undefined,
+    });
+    const { container } = render(
+      <Message message={msg} isStreaming={true} />,
+    );
+
+    // No status indicator
+    expect(container.querySelector(".status-indicator")).toBeNull();
+    // Content renders
+    expect(container.textContent).toContain("The answer is here.");
+  });
+
+  it("finished message has no status element", () => {
+    const msg = makeAssistantMsg("Complete answer.", {
+      statusText: undefined,
+    });
+    const { container } = render(
+      <Message message={msg} isStreaming={false} />,
+    );
+
+    expect(container.querySelector(".status-indicator")).toBeNull();
+    expect(container.querySelector(".status-pulse")).toBeNull();
+    expect(container.textContent).toContain("Complete answer.");
+  });
+
+  it("streams normally without status events", () => {
+    const msg = makeAssistantMsg("Streaming text.", {
+      statusText: undefined,
+    });
+    const { container } = render(
+      <Message message={msg} isStreaming={true} />,
+    );
+
+    expect(container.querySelector(".status-indicator")).toBeNull();
+    expect(container.textContent).toContain("Streaming text.");
+  });
+
   it("derives access label from permissions", () => {
     const msg = makeAssistantMsg("Answer.", {
       permissions: ["hr"],

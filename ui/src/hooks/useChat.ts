@@ -246,7 +246,24 @@ export function useChat(): UseChatReturn {
       startStreamSync();
 
       const controller = streamChat(query, perms, sessionId, {
+        onStatus(text: string) {
+          setState((prev) => ({
+            ...prev,
+            messages: prev.messages.map((m) =>
+              m.id === assistantId ? { ...m, statusText: text } : m,
+            ),
+          }));
+        },
         onToken(text: string) {
+          // First token: clear status
+          if (pendingRef.current === "") {
+            setState((prev) => ({
+              ...prev,
+              messages: prev.messages.map((m) =>
+                m.id === assistantId ? { ...m, statusText: undefined } : m,
+              ),
+            }));
+          }
           // Append to pending ref (fast, no React re-render).
           // The rAF drain loop reveals characters at a smooth pace.
           pendingRef.current += text;
