@@ -17,7 +17,9 @@ export function MessageList({ messages, status, onApprove, onReject }: MessageLi
   const [following, setFollowing] = useState(true);
   const lastScrollTopRef = useRef(0);
   const programmaticScrollRef = useRef(false);
-  const prevMsgCountRef = useRef(messages.length);
+  const prevUserCountRef = useRef(
+    messages.filter((m) => m.role === "user").length,
+  );
 
   // Detect genuine user scroll-up by tracking scroll DIRECTION.
   const handleScroll = useCallback(() => {
@@ -56,15 +58,15 @@ export function MessageList({ messages, status, onApprove, onReject }: MessageLi
   }, []);
 
   // Reset following when a NEW USER MESSAGE is added.
-  // That is an unambiguous signal: they want to watch the new answer.
+  // Track user message count rather than inspecting the last element,
+  // because sendMessage appends both a user and an assistant placeholder
+  // in one update (so messages[last] is always the assistant).
   useEffect(() => {
-    if (messages.length > prevMsgCountRef.current) {
-      const last = messages[messages.length - 1];
-      if (last?.role === "user") {
-        setFollowing(true);
-      }
+    const userCount = messages.filter((m) => m.role === "user").length;
+    if (userCount > prevUserCountRef.current) {
+      setFollowing(true);
     }
-    prevMsgCountRef.current = messages.length;
+    prevUserCountRef.current = userCount;
   }, [messages.length]);
 
   // Follow bottom while following is true
