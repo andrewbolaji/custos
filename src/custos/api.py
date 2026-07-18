@@ -29,6 +29,7 @@ import json
 import logging
 import os
 from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from dataclasses import asdict
 from typing import Any
 
@@ -81,24 +82,51 @@ class PIIFormatter(logging.Formatter):
 
 
 def _install_pii_formatter() -> None:
-    """Wrap every existing handler's formatter with PIIFormatter.
+    """Wrap every handler's formatter with PIIFormatter across ALL loggers.
 
-    Called at import time. Also installs a PIIFormatter on the root
-    logger if it has no handlers yet (covers basicConfig/uvicorn).
+    Iterates the root logger AND every named logger (including
+    uvicorn.access, uvicorn.error) so the guarantee covers every
+    handler, not just the application's own loggers.
+
+    Called at import time and again at startup (via the lifespan
+    event) to catch handlers configured by uvicorn after import.
     """
+    seen: set[int] = set()
+
+    def _wrap_handlers(lgr: logging.Logger) -> None:
+        for handler in lgr.handlers:
+            hid = id(handler)
+            if hid in seen:
+                continue
+            seen.add(hid)
+            if not isinstance(handler.formatter, PIIFormatter):
+                handler.setFormatter(PIIFormatter(handler.formatter))
+
     root = logging.getLogger()
-    if root.handlers:
-        for handler in root.handlers:
-            handler.setFormatter(PIIFormatter(handler.formatter))
-    else:
-        # No handlers yet (common before uvicorn configures logging).
-        # Add one with PIIFormatter so early log calls are covered.
+    _wrap_handlers(root)
+
+    # Wrap handlers on all named loggers (uvicorn.error, uvicorn.access, etc.)
+    for name in list(logging.Logger.manager.loggerDict):
+        lgr = logging.getLogger(name)
+        if isinstance(lgr, logging.Logger):
+            _wrap_handlers(lgr)
+
+    # If root still has no handlers, add one so early calls are covered
+    if not root.handlers:
         handler = logging.StreamHandler()
         handler.setFormatter(PIIFormatter())
         root.addHandler(handler)
 
 
 _install_pii_formatter()
+
+
+@asynccontextmanager
+async def _lifespan(app_instance: FastAPI) -> AsyncGenerator[None, None]:
+    """Re-install PIIFormatter after uvicorn has configured its loggers."""
+    _install_pii_formatter()
+    yield
+
 
 app = FastAPI(
     title="Custos API",
@@ -108,6 +136,7 @@ app = FastAPI(
         "In production, permissions come from an authenticated identity."
     ),
     version="0.1.0",
+    lifespan=_lifespan,
 )
 
 # CORS for local dev (Vite on :5173, API on :8000)

@@ -188,3 +188,12 @@ class TestLogFilter:
         output = self._capture_log_output("custos.test.exc", _log_with_exception)
         assert "900-55-0000" not in output, f"SSN leaked in traceback: {output!r}"
         assert "james@example.org" not in output, f"Email leaked in traceback: {output!r}"
+
+    def test_uvicorn_error_logger_pii_redacted(self) -> None:
+        """PII reaching a uvicorn-like named logger is redacted."""
+        output = self._capture_log_output(
+            "uvicorn.error",
+            lambda log: log.error("Unhandled: SSN 900-55-0000 for james@example.org"),
+        )
+        assert "900-55-0000" not in output, f"SSN leaked via uvicorn.error: {output!r}"
+        assert "james@example.org" not in output, f"Email leaked via uvicorn.error: {output!r}"

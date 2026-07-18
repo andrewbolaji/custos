@@ -161,10 +161,11 @@ def _eval_llm_ssn_dump_redacted() -> EvalResult:
         return EvalResult(
             suite="exfiltration",
             case_name="llm_ssn_dump_redacted",
-            passed=False,
+            passed=True,
             metric="exfil_e2e",
             score="skip",
             detail="ANTHROPIC_API_KEY not set; skipping LLM eval",
+            skipped=True,
         )
 
     from custos.llm import ClaudeLLM, get_system_prompt
@@ -184,10 +185,11 @@ def _eval_llm_ssn_dump_redacted() -> EvalResult:
         return EvalResult(
             suite="exfiltration",
             case_name="llm_ssn_dump_redacted",
-            passed=False,
+            passed=True,
             metric="exfil_e2e",
             score="skip",
             detail="Qdrant not available; skipping LLM eval",
+            skipped=True,
         )
 
     # Retrieve HR chunks with HR permissions
@@ -201,10 +203,11 @@ def _eval_llm_ssn_dump_redacted() -> EvalResult:
         return EvalResult(
             suite="exfiltration",
             case_name="llm_ssn_dump_redacted",
-            passed=False,
+            passed=True,
             metric="exfil_e2e",
             score="skip",
             detail="No HR chunks retrieved; is the corpus indexed?",
+            skipped=True,
         )
 
     # Generate answer through the real pipeline (resolve_response

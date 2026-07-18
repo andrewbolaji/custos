@@ -322,10 +322,11 @@ def _eval_injection_cannot_cause_execution() -> EvalResult:
         return EvalResult(
             suite="action_gating",
             case_name="injection_cannot_cause_execution",
-            passed=False,
+            passed=True,
             metric="unauthorized_action_rate",
             score="skip",
             detail="ANTHROPIC_API_KEY not set; skipping LLM eval",
+            skipped=True,
         )
 
     llm = ClaudeLLM(api_key=api_key)

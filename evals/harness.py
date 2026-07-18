@@ -34,6 +34,7 @@ class EvalResult:
     metric: str
     score: float | str
     detail: str = ""
+    skipped: bool = False
 
 
 # Hard-gate suites: these protect security invariants and must never
@@ -94,7 +95,12 @@ def print_table(results: list[EvalResult], not_implemented: list[str]) -> None:
 
     # Real results
     for r in results:
-        status = "PASS" if r.passed else "FAIL"
+        if r.skipped:
+            status = "SKIP"
+        elif r.passed:
+            status = "PASS"
+        else:
+            status = "FAIL"
         score_str = f"{r.score}" if isinstance(r.score, str) else f"{r.score:.3f}"
         all_rows.append((r.suite, r.case_name, r.metric, score_str, status))
 
@@ -131,11 +137,17 @@ def print_table(results: list[EvalResult], not_implemented: list[str]) -> None:
         )
     print(sep)
 
-    real_total = len(results)
-    passed = sum(1 for r in results if r.passed)
-    failed = real_total - passed
+    skipped = sum(1 for r in results if r.skipped)
+    real_results = [r for r in results if not r.skipped]
+    passed = sum(1 for r in real_results if r.passed)
+    failed = sum(1 for r in real_results if not r.passed)
     not_impl = len(not_implemented)
-    print(f"  Proven: {passed}  Failed: {failed}  Not implemented: {not_impl}\n")
+    parts = [f"Proven: {passed}", f"Failed: {failed}"]
+    if skipped:
+        parts.append(f"Skipped: {skipped}")
+    if not_impl:
+        parts.append(f"Not implemented: {not_impl}")
+    print(f"  {'  '.join(parts)}\n")
 
 
 def main() -> int:
@@ -162,8 +174,8 @@ def main() -> int:
 
     print_table(all_results, not_implemented)
 
-    # Determine overall status
-    failures = [r for r in all_results if not r.passed]
+    # Determine overall status (skipped evals are neutral, not failures)
+    failures = [r for r in all_results if not r.passed and not r.skipped]
     hard_gate_missing = [s for s in not_implemented if s in HARD_GATE_SUITES]
 
     if failures:
