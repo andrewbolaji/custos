@@ -3,9 +3,9 @@
 The demo must be **byte-reproducible** (pinned seed + fixed generation date, like Reckon) so every run, screenshot, and eval is deterministic and defensible in an interview.
 
 ## The fictional company
-**Meridian Home Services** — a mid-size HVAC / plumbing / electrical company. (Deliberately the same universe as Reckon's demo client, so the portfolio reads as one story: *the company built Meridian both a BI platform (Reckon) and a private AI assistant (Custos)*. Swap to a generic company if you'd rather show a different vertical.)
+**Meridian Home Services** — a mid-size HVAC / plumbing / electrical company. The same fictional client used in Reckon (the BI platform project), so both portfolio projects build against one coherent scenario rather than two disconnected demos.
 
-Why a services SMB: it's exactly the company's target buyer, and it has an obvious mix of *public-ish* docs and *confidential* docs — which makes access control and PII redaction demonstrable rather than theoretical.
+A services SMB has an obvious mix of *public-ish* docs and *confidential* docs, which makes access control and PII redaction demonstrable rather than theoretical.
 
 ## Document set (small, believable, varied)
 - **Employee handbook** — policies, PTO, benefits. (General access.)

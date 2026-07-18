@@ -98,7 +98,7 @@ All PII is synthetic and uses reserved/invalid ranges. See `corpus/output/manife
 | 2 | Agentic layer: tool-use with guardrails | Planned |
 | 3 | Security pillar: injection defense, PII redaction, access control, red-team report | Planned |
 | 4 | Production: containerized, observability, CI/CD, deploy | Planned |
-| 5 | Wire into the company as a live demo | Planned |
+| 5 | Deploy as a hosted live demo | Planned |
 
 ## Honesty rule
 

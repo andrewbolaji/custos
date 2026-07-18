@@ -3,6 +3,10 @@
 .env.local
 .env.*.local
 
+# Personal planning/strategy docs (not part of the project)
+Plan_Reckon_Capture_and_Next_Flagship.md
+PROJECT_BRIEF.md
+
 # Python
 __pycache__/
 *.py[cod]
