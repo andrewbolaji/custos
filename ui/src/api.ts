@@ -54,9 +54,12 @@ export function streamChat(
     .then(async (response) => {
       if (!response.ok) {
         if (response.status === 429) {
-          // Rate limit: render in the bubble, not the error banner
           const data = await response.json().catch(() => null);
           const detail = data?.detail ?? "Usage limit reached. Please try again later.";
+          callbacks.onRateLimited(detail);
+        } else if (response.status === 503) {
+          const data = await response.json().catch(() => null);
+          const detail = data?.detail ?? "The assistant is temporarily unavailable.";
           callbacks.onRateLimited(detail);
         } else {
           callbacks.onError(`Server returned ${response.status}`);

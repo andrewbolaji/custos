@@ -274,6 +274,15 @@ def _get_client_ip(request: Request) -> str:
     return client.host if client else "unknown"
 
 
+_UNAVAILABLE_MSG = "The assistant is temporarily unavailable. Please try again shortly."
+
+
+def _require_ready() -> None:
+    """Raise 503 if the index is not ready. Called before any work."""
+    if not _index_ready:
+        raise HTTPException(status_code=503, detail=_UNAVAILABLE_MSG)
+
+
 def _check_rate_limit(request: Request, query: str, session_id: str) -> str | None:
     """Check all rate limits. Returns None if allowed, or an error message.
 
@@ -305,8 +314,17 @@ def _retrieve_and_scan(
     Returns (sanitized_chunks, injection_detected). The source documents
     are never modified; only the prompt copies have matched spans replaced
     with a neutral placeholder.
+
+    Wraps retrieval so a Qdrant connection failure (index was ready at
+    boot but Qdrant died afterward) returns a clean 503 rather than
+    propagating an exception into the SSE stream. The real error is
+    logged server-side with full detail.
     """
-    chunks = _retrieve_permitted_chunks(query, user_permissions)
+    try:
+        chunks = _retrieve_permitted_chunks(query, user_permissions)
+    except Exception:
+        logger.exception("Retrieval failed (Qdrant may be down)")
+        raise HTTPException(status_code=503, detail=_UNAVAILABLE_MSG) from None
     if not chunks:
         return chunks, False
     result = _injection_detector.scan(chunks)
@@ -478,6 +496,7 @@ def ingest() -> dict[str, Any]:
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(request: ChatRequest, http_request: Request) -> dict[str, Any]:
     """Query the assistant (synchronous)."""
+    _require_ready()
     limit_msg = _check_rate_limit(http_request, request.query, request.session_id)
     if limit_msg:
         raise HTTPException(status_code=429, detail=limit_msg)
@@ -499,10 +518,12 @@ def chat(request: ChatRequest, http_request: Request) -> dict[str, Any]:
         result = _run_agent(
             request.query, request.user_permissions, history=trimmed, chunks=chunks
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Chat request failed")
         raise HTTPException(
-            status_code=500, detail="Chat request failed. See server logs."
+            status_code=500, detail="Something went wrong. Please try again."
         ) from e
 
     return {
@@ -514,20 +535,8 @@ def chat(request: ChatRequest, http_request: Request) -> dict[str, Any]:
 
 @app.post("/api/chat/stream")
 async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourceResponse:
-    """Query the assistant (streaming SSE).
-
-    Uses AgentLoop.run_streaming() for real token-level streaming.
-    Each text delta is emitted as an SSE token event as it arrives
-    from Claude, giving fast time-to-first-token.
-
-    SSE events:
-        event: token      data: {"text": "..."}
-        event: citations   data: {"citations": [...]}
-        event: tool_use    data: {"tool_name": "...", "simulated": false}
-        event: done        data: {}
-        event: error       data: {"detail": "..."}
-        event: refused     data: {"text": "I don't have information..."}
-    """
+    """Query the assistant (streaming SSE)."""
+    _require_ready()
     limit_msg = _check_rate_limit(http_request, request.query, request.session_id)
     if limit_msg:
         raise HTTPException(status_code=429, detail=limit_msg)

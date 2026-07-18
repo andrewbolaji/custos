@@ -7,6 +7,8 @@ request/response shapes, not the full pipeline).
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from fastapi.testclient import TestClient
 
 import custos.api as api_module
@@ -37,23 +39,88 @@ class TestHealthEndpoint:
             api_module._index_ready = original
 
 
+class TestReadinessGate:
+    """Chat endpoints must return 503 when the index is not ready."""
+
+    def test_chat_returns_503_when_not_ready(self) -> None:
+        original = api_module._index_ready
+        try:
+            api_module._index_ready = False
+            response = client.post(
+                "/api/chat",
+                json={"query": "test", "user_permissions": ["general"]},
+            )
+            assert response.status_code == 503
+            assert "temporarily unavailable" in response.json()["detail"].lower()
+        finally:
+            api_module._index_ready = original
+
+    def test_stream_returns_503_when_not_ready(self) -> None:
+        original = api_module._index_ready
+        try:
+            api_module._index_ready = False
+            response = client.post(
+                "/api/chat/stream",
+                json={"query": "test", "user_permissions": ["general"]},
+            )
+            assert response.status_code == 503
+            assert "temporarily unavailable" in response.json()["detail"].lower()
+        finally:
+            api_module._index_ready = original
+
+    def test_503_does_not_call_model(self) -> None:
+        """When index is not ready, _get_llm must never be called."""
+        original = api_module._index_ready
+        try:
+            api_module._index_ready = False
+            with patch.object(api_module, "_get_llm") as mock_llm:
+                client.post(
+                    "/api/chat",
+                    json={"query": "test"},
+                )
+                mock_llm.assert_not_called()
+        finally:
+            api_module._index_ready = original
+
+
+class TestRetrievalConnectionError:
+    """A Qdrant connection failure mid-request must return a clean 503."""
+
+    def test_retrieval_failure_returns_503(self) -> None:
+        original = api_module._index_ready
+        try:
+            api_module._index_ready = True
+            with patch.object(
+                api_module, "_retrieve_permitted_chunks",
+                side_effect=ConnectionError("Qdrant refused connection"),
+            ):
+                response = client.post(
+                    "/api/chat",
+                    json={"query": "test"},
+                )
+                assert response.status_code == 503
+                data = response.json()
+                assert "temporarily unavailable" in data["detail"].lower()
+                # Must NOT expose internal details
+                assert "qdrant" not in data["detail"].lower()
+                assert "connection" not in data["detail"].lower()
+        finally:
+            api_module._index_ready = original
+
+
 class TestChatEndpointValidation:
     def test_chat_requires_query(self) -> None:
         response = client.post("/api/chat", json={})
         assert response.status_code == 422  # Pydantic validation
 
     def test_chat_accepts_valid_request(self) -> None:
-        # This will fail with a connection error (no Qdrant/Claude),
-        # but it validates the request parsing works
         response = client.post(
             "/api/chat",
             json={"query": "What is the PTO policy?", "user_permissions": ["general"]},
         )
-        # We expect a 500 (no Qdrant) or 503 (no API key), not a 422
         assert response.status_code != 422
 
     def test_chat_default_permissions(self) -> None:
-        # user_permissions defaults to ["general"]
         response = client.post(
             "/api/chat",
             json={"query": "test"},
@@ -63,8 +130,5 @@ class TestChatEndpointValidation:
 
 class TestIngestEndpointValidation:
     def test_ingest_endpoint_exists(self) -> None:
-        # Will fail with 500 (connection error to Qdrant) but proves
-        # the endpoint exists and is wired correctly
         response = client.post("/api/ingest")
-        # Not a 404 or 405 (endpoint exists); 500 is expected (no Qdrant)
         assert response.status_code not in (404, 405, 422)

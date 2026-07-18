@@ -89,6 +89,24 @@ describe("Message rendering", () => {
     expect(container.textContent).toContain("Streaming text.");
   });
 
+  it("503 unavailable renders as bubble without refusal line", () => {
+    const msg = makeAssistantMsg(
+      "The assistant is temporarily unavailable. Please try again shortly.",
+      {
+        rateLimitMessage: "The assistant is temporarily unavailable. Please try again shortly.",
+        refused: true,
+      },
+    );
+    const { container } = render(
+      <Message message={msg} isStreaming={false} />,
+    );
+
+    expect(container.textContent).toContain("temporarily unavailable");
+    expect(container.textContent).not.toContain(
+      "could not find relevant information",
+    );
+  });
+
   it("derives access label from permissions", () => {
     const msg = makeAssistantMsg("Answer.", {
       permissions: ["hr"],
