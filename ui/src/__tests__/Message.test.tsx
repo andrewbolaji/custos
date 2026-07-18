@@ -79,23 +79,8 @@ describe("Message rendering", () => {
     expect(container.textContent).toContain("The answer is here.");
   });
 
-  it("finished message has no status element", () => {
-    const msg = makeAssistantMsg("Complete answer.", {
-      statusText: undefined,
-    });
-    const { container } = render(
-      <Message message={msg} isStreaming={false} />,
-    );
-
-    expect(container.querySelector(".status-indicator")).toBeNull();
-    expect(container.querySelector(".status-pulse")).toBeNull();
-    expect(container.textContent).toContain("Complete answer.");
-  });
-
   it("streams normally without status events", () => {
-    const msg = makeAssistantMsg("Streaming text.", {
-      statusText: undefined,
-    });
+    const msg = makeAssistantMsg("Streaming text.");
     const { container } = render(
       <Message message={msg} isStreaming={true} />,
     );

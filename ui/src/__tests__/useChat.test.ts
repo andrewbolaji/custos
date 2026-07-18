@@ -364,6 +364,53 @@ describe("useChat: reconciliation", () => {
     const revealedFromBurst = msg.content.length - "Hello".length;
     expect(revealedFromBurst).toBeLessThan(50);
   });
+
+  it("onDone clears statusText when no token was delivered", () => {
+    const { result } = renderHook(() => useChat());
+
+    act(() => {
+      result.current.sendMessage("test");
+    });
+
+    // Deliver a status event but NO token
+    act(() => {
+      lastCallbacks!.onStatus("Searching documents");
+    });
+
+    // Status should be set
+    expect(result.current.state.messages[1].statusText).toBe("Searching documents");
+
+    // Done fires without any token
+    act(() => {
+      lastCallbacks!.onDone();
+    });
+
+    // statusText must be cleared
+    const msg = result.current.state.messages[1];
+    expect(msg.statusText).toBeUndefined();
+  });
+
+  it("cancel clears status (message removed entirely)", () => {
+    const { result } = renderHook(() => useChat());
+
+    act(() => {
+      result.current.sendMessage("test");
+    });
+
+    act(() => {
+      lastCallbacks!.onStatus("Searching documents");
+    });
+
+    expect(result.current.state.messages[1].statusText).toBe("Searching documents");
+
+    // Cancel removes the in-flight pair
+    act(() => {
+      result.current.cancelStream();
+    });
+
+    // No messages remain
+    expect(result.current.state.messages).toHaveLength(0);
+  });
 });
 
 describe("useChat: confirmation flow", () => {

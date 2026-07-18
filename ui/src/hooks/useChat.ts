@@ -346,7 +346,8 @@ export function useChat(): UseChatReturn {
             ...prev,
             status: "error",
             errorMessage: detail,
-            // Remove empty assistant bubble so it doesn't float next to the error banner
+            // Remove empty assistant bubble (including ones showing only status)
+            // so it doesn't float next to the error banner
             messages: prev.messages.filter(
               (m) => !(m.id === assistantId && m.role === "assistant" && !m.content),
             ),
@@ -362,6 +363,10 @@ export function useChat(): UseChatReturn {
                 : prev.status === "awaiting_confirmation"
                   ? "awaiting_confirmation"
                   : "idle",
+            // Clear statusText on any terminal path
+            messages: prev.messages.map((m) =>
+              m.id === assistantId ? { ...m, statusText: undefined } : m,
+            ),
           }));
         },
       }, history);

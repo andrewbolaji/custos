@@ -350,6 +350,15 @@ body {
   font-size: var(--text-base);
   line-height: 1.55;
   color: var(--ink);
+  /* 150ms fade on mount: fires once when the element is created
+     (the status-to-content swap). CSS animations do not replay on
+     React re-renders into an existing DOM node. */
+  animation: content-in 150ms ease both;
+}
+
+@keyframes content-in {
+  from { opacity: 0.6; }
+  to { opacity: 1; }
 }
 
 /* Soft leading edge: newest text fades up from the bottom during streaming.
