@@ -58,16 +58,15 @@ export function useChat(): UseChatReturn {
   const sessionId = useMemo(() => makeId(), []);
 
   // Streaming buffer: tokens accumulate in pendingRef at SSE speed.
-  // A rAF loop drains them at a constant pace (~4 chars/frame, ~240
+  // A rAF loop drains them at a constant pace (~3 chars/frame, ~180
   // chars/sec at 60fps) into shownRef, committing to React state at
   // ~30fps. The rate is identical at start, middle, and end of every
-  // answer: no adaptive catch-up, no acceleration when the full
-  // answer has arrived.
+  // answer: no adaptive catch-up, no acceleration.
   const pendingRef = useRef("");     // full received text
   const shownRef = useRef(0);        // how many chars revealed so far
   const rafRef = useRef<number | null>(null);
   const lastCommitRef = useRef(0);   // last setState timestamp
-  const CHARS_PER_FRAME = 4;         // constant, ~240 chars/sec
+  const CHARS_PER_FRAME = 3;         // constant, ~180 chars/sec
   const COMMIT_INTERVAL = 33;        // ~30fps
 
   const startStreamSync = useCallback(() => {
@@ -215,15 +214,10 @@ export function useChat(): UseChatReturn {
           pendingRef.current += text;
         },
         onTextReplace(text: string) {
-          // Reconciliation: replace pending and show all immediately.
+          // Reconciliation: update pending but let the drain continue
+          // at the constant rate. Do NOT jump shownRef to text.length;
+          // that would snap the answer to complete and read as racing.
           pendingRef.current = text;
-          shownRef.current = text.length;
-          setState((prev) => ({
-            ...prev,
-            messages: prev.messages.map((m) =>
-              m.id === assistantId ? { ...m, content: text } : m,
-            ),
-          }));
         },
         onCitations(citations: Citation[]) {
           setState((prev) => ({

@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type KeyboardEvent } from "react";
+import { useRef, useState, type KeyboardEvent } from "react";
 
 import type { ChatStatus } from "../types";
 
@@ -13,25 +13,35 @@ export function ChatInput({ status, onSend, onCancel }: ChatInputProps) {
   const isStreaming = status === "streaming";
   const canSend = input.trim().length > 0 && !isStreaming;
 
-  function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!canSend) return;
+  // Guard against the cancel-to-send race: after cancel, block sends
+  // for a short window so a pointer event that started on Cancel
+  // cannot activate a freshly-mounted Send button.
+  const justCancelledRef = useRef(false);
+
+  function handleSend() {
+    if (!canSend || justCancelledRef.current) return;
     onSend(input.trim());
     setInput("");
+  }
+
+  function handleCancel() {
+    justCancelledRef.current = true;
+    onCancel();
+    // Clear the guard after the current event cycle completes
+    setTimeout(() => {
+      justCancelledRef.current = false;
+    }, 100);
   }
 
   function handleKeyDown(e: KeyboardEvent) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      if (canSend) {
-        onSend(input.trim());
-        setInput("");
-      }
+      handleSend();
     }
   }
 
   return (
-    <form className="composer" onSubmit={handleSubmit}>
+    <div className="composer">
       <input
         value={input}
         onChange={(e) => setInput(e.target.value)}
@@ -41,18 +51,21 @@ export function ChatInput({ status, onSend, onCancel }: ChatInputProps) {
       />
       {isStreaming ? (
         <button
+          key="cancel"
           type="button"
           className="cancel-btn"
-          onClick={onCancel}
+          onClick={handleCancel}
           aria-label="Cancel response"
         >
           Cancel
         </button>
       ) : (
         <button
-          type="submit"
+          key="send"
+          type="button"
           className="send-btn"
           disabled={!canSend}
+          onClick={handleSend}
           aria-label="Send message"
         >
           Send
@@ -67,6 +80,6 @@ export function ChatInput({ status, onSend, onCancel }: ChatInputProps) {
           </svg>
         </button>
       )}
-    </form>
+    </div>
   );
 }
