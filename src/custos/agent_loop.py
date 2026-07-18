@@ -24,8 +24,9 @@ SECURITY INVARIANTS:
 
 STREAMING:
 run_streaming forwards text deltas to the caller AS the model generates
-them (real token streaming, not replay). A 20-char trailing guard buffer
+them (real token streaming, not replay). A 64-char trailing guard buffer
 catches ```citations fences and applies per-token PII/dash cleaning.
+Email is the binding constraint on guard size (routinely 40-60+ chars).
 On tool turns, minimal leading text may stream before the tool_use block
 is detected; the confirmation gate is independent of streaming.
 resolve_response runs on the full text at stream end as the authority;
@@ -56,12 +57,15 @@ DEFAULT_MAX_STEPS = 5
 # Maximum wall-clock seconds for the entire agent loop (threat T7)
 DEFAULT_TIMEOUT_SECONDS = 30
 
-# Guard buffer size for streaming cleaning. Sized to catch:
-# - SSN: ~11 chars, Phone: ~14, ```citations fence: 12 chars
-# A full-length inline [chunk_id] (~50 chars) exceeds the guard;
-# the system prompt forbids inline markers and resolve_response
-# strips them on the full text, so at worst a rare fragment flashes.
-_GUARD_SIZE = 20
+# Guard buffer size for streaming cleaning. Sized for the LONGEST
+# Tier-1 PII pattern: email addresses routinely reach 40-60+ chars
+# (james.santos@example.org is 24; longer corporate addresses exist).
+# Email is the binding constraint; SSN (~11), phone (~14), and the
+# ```citations fence (12) all fit within it.
+# A full-length inline [chunk_id] (~50 chars) also fits at 64.
+# The guard delays first paint by ~64 chars (a fraction of a sentence),
+# imperceptible on a real answer.
+_GUARD_SIZE = 64
 
 # Per-token cleaning patterns (keyed on ```citations, NEVER bare ```)
 _CITATIONS_FENCE_RE = re.compile(r"```citations")
@@ -319,7 +323,7 @@ class AgentLoop:
         """Execute the agent loop with real token streaming.
 
         Text deltas are forwarded to the caller AS the model generates
-        them, not buffered and replayed. A trailing guard buffer (20
+        them, not buffered and replayed. A trailing guard buffer (64
         chars, keyed on ```citations not bare ```) catches citation
         fences and applies per-token PII/dash cleaning.
 
@@ -466,11 +470,12 @@ class AgentLoop:
                     full_text, prompt_parts.chunk_lookup
                 )
 
-                # Reconcile: if the streamed text differs from the
-                # authoritative cleaned text, emit a correction delta
-                # that replaces the entire displayed text.
+                # Reconcile: if the streamed text materially differs
+                # from the authoritative cleaned text, emit a correction.
+                # Normalize whitespace so trivial trailing-space differences
+                # (from guard flushing) don't trigger a visible re-render.
                 already_streamed = "".join(streamed_text)
-                if already_streamed != answer.text:
+                if already_streamed.strip() != answer.text.strip():
                     yield AgentEvent(
                         kind="text_replace",
                         data={"text": answer.text},

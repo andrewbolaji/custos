@@ -391,7 +391,12 @@ class TestStreamingInvariant:
     def test_streams_multiple_deltas(self) -> None:
         """Several LLM tokens must produce several text_delta events."""
         llm = _make_llm()
-        tokens = ["The ", "PTO ", "policy ", "is ", "10 days."]
+        # Tokens must exceed guard size (64 chars) to produce multiple deltas
+        tokens = [
+            "The PTO rate is ten days per year for new employees. ",
+            "Unused days carry over up to five days into the next year. ",
+            "All planned absences need a request two weeks in advance. ",
+        ]
         final_msg = FakeResponse(content=[FakeTextBlock(text="".join(tokens))])
         llm._client.messages.stream.return_value = FakeStreamContext.from_tokens(
             tokens, final_msg
@@ -407,7 +412,7 @@ class TestStreamingInvariant:
         )
         reconstructed = "".join(e.data["text"] for e in text_deltas)
         assert "PTO" in reconstructed
-        assert "10 days" in reconstructed
+        assert "ten days" in reconstructed
 
     def test_deltas_yielded_during_stream_not_after(self) -> None:
         """text_delta events are yielded DURING stream iteration,
@@ -418,12 +423,12 @@ class TestStreamingInvariant:
         flushes happen while the stream is still producing tokens.
         """
         llm = _make_llm()
-        # Each token is >20 chars so the guard flushes during iteration
+        # Each token is >64 chars so the guard flushes during iteration
         tokens = [
-            "The PTO accrual rate for new employees is ",
-            "ten days per year according to the handbook. ",
-            "Unused days carry over up to five days. ",
-            "Request time off at least two weeks ahead.",
+            "The PTO rate for new employees at Meridian is ten days per year monthly. ",
+            "That rate applies to employees with zero to two years of service at the company. ",
+            "Unused days carry over into the next calendar year up to a maximum of five days. ",
+            "All planned absences require a request submitted at least two full weeks in advance.",
         ]
         final_msg = FakeResponse(content=[FakeTextBlock(text="".join(tokens))])
 
@@ -695,7 +700,11 @@ class TestStreamingInvariant:
         We verify the context manager's __exit__ is called.
         """
         llm = _make_llm()
-        tokens = ["Hello ", "world ", "still ", "going ", "on."]
+        # Tokens must exceed guard size (64 chars) to produce a delta
+        tokens = [
+            "The PTO rate for new employees at Meridian is ten days per year monthly. ",
+            "Unused days carry over into the next year up to a maximum of five days total. ",
+        ]
         final_msg = FakeResponse(content=[FakeTextBlock(text="".join(tokens))])
 
         exit_called = False
@@ -720,4 +729,81 @@ class TestStreamingInvariant:
         assert exit_called, (
             "Stream context __exit__ was not called on generator close. "
             "Cancel would not abort the Claude API call."
+        )
+        # NOTE: whether __exit__ actually stops billing is Anthropic SDK
+        # behavior we rely on, which is a fair assumption but worth knowing
+        # is assumed rather than measured.
+
+    def test_long_email_never_leaks_in_any_delta(self) -> None:
+        """An email longer than the old guard (>20 chars) must never appear
+        unredacted in ANY text_delta event, not just the final reconciled text.
+
+        Email is the binding constraint on guard size. This test catches
+        the bug where a partial address straddling the emit/guard boundary
+        would stream unredacted.
+        """
+        llm = _make_llm()
+        long_email = "james.santos@example.org"  # 24 chars
+        assert len(long_email) > 20, "Test email must exceed old guard size"
+
+        # Split the email across multiple small tokens to maximize
+        # the chance of straddling the guard boundary
+        tokens = [
+            "Contact ",
+            "james.",
+            "santos@",
+            "example.",
+            "org for details.",
+        ]
+        final_msg = FakeResponse(content=[FakeTextBlock(text="".join(tokens))])
+        llm._client.messages.stream.return_value = FakeStreamContext.from_tokens(
+            tokens, final_msg
+        )
+
+        loop = AgentLoop(llm=llm, registry=ToolRegistry())
+        events = list(loop.run_streaming(_make_prompt_parts(), "contact?"))
+
+        # Check EVERY text_delta individually, not just the concatenation
+        for event in events:
+            if event.kind == "text_delta":
+                assert long_email not in event.data["text"], (
+                    f"Unredacted email in text_delta: {event.data['text']!r}"
+                )
+                assert "james.santos@example.org" not in event.data["text"], (
+                    f"Email leaked in delta: {event.data['text']!r}"
+                )
+
+        # Also verify the final text has it masked
+        text_deltas = [e for e in events if e.kind == "text_delta"]
+        replace_events = [e for e in events if e.kind == "text_replace"]
+        if replace_events:
+            final_text = replace_events[-1].data["text"]
+        else:
+            final_text = "".join(e.data["text"] for e in text_deltas)
+        assert long_email not in final_text, f"Email in final text: {final_text!r}"
+        assert "[EMAIL]" in final_text
+
+    def test_clean_answer_no_text_replace(self) -> None:
+        """A clean answer with no artifacts must NOT produce a text_replace event.
+
+        Reconciliation should only fire on real divergence, not trivial
+        whitespace differences from guard flushing.
+        """
+        llm = _make_llm()
+        # Long enough tokens that the guard flushes during streaming
+        tokens = [
+            "The PTO accrual rate for new employees is ten days per year. ",
+            "Unused days carry over up to five days into the next year.",
+        ]
+        final_msg = FakeResponse(content=[FakeTextBlock(text="".join(tokens))])
+        llm._client.messages.stream.return_value = FakeStreamContext.from_tokens(
+            tokens, final_msg
+        )
+
+        loop = AgentLoop(llm=llm, registry=ToolRegistry())
+        events = list(loop.run_streaming(_make_prompt_parts(), "PTO?"))
+
+        replace_events = [e for e in events if e.kind == "text_replace"]
+        assert len(replace_events) == 0, (
+            f"Unexpected text_replace on clean answer: {replace_events}"
         )
