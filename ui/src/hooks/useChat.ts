@@ -58,20 +58,20 @@ export function useChat(): UseChatReturn {
   const sessionId = useMemo(() => makeId(), []);
 
   // Streaming buffer: tokens accumulate in pendingRef at SSE speed.
-  // A rAF loop drains them at a character pace (~6 chars/frame) into
-  // shownRef, committing to React state at ~30fps. This makes the
-  // text flow like water instead of dumping in lumps.
+  // A rAF loop drains them at a constant pace (~4 chars/frame, ~240
+  // chars/sec at 60fps) into shownRef, committing to React state at
+  // ~30fps. The rate is identical at start, middle, and end of every
+  // answer: no adaptive catch-up, no acceleration when the full
+  // answer has arrived.
   const pendingRef = useRef("");     // full received text
   const shownRef = useRef(0);        // how many chars revealed so far
   const rafRef = useRef<number | null>(null);
   const lastCommitRef = useRef(0);   // last setState timestamp
-  const CHARS_PER_FRAME = 6;
+  const CHARS_PER_FRAME = 4;         // constant, ~240 chars/sec
   const COMMIT_INTERVAL = 33;        // ~30fps
 
   const startStreamSync = useCallback(() => {
     // Always cancel any in-flight loop and start fresh.
-    // (No early return: a leftover drain from a previous message
-    // would block this one from ever starting.)
     if (rafRef.current !== null) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
@@ -81,19 +81,12 @@ export function useChat(): UseChatReturn {
       const shown = shownRef.current;
 
       if (shown < pending.length) {
-        // Adaptive step: drain faster if a lot is pending, but
-        // never dump the whole buffer at once.
-        const behind = pending.length - shown;
-        const step = Math.min(
-          Math.max(CHARS_PER_FRAME, Math.floor(behind / 8)),
-          behind,
-        );
-        const next = Math.min(shown + step, pending.length);
+        const next = Math.min(shown + CHARS_PER_FRAME, pending.length);
         shownRef.current = next;
 
         // Throttle React commits to ~30fps
         const now = performance.now();
-        if (now - lastCommitRef.current >= COMMIT_INTERVAL || next === pending.length) {
+        if (now - lastCommitRef.current >= COMMIT_INTERVAL) {
           lastCommitRef.current = now;
           const content = pending.slice(0, next);
           const id = assistantIdRef.current;
@@ -120,8 +113,8 @@ export function useChat(): UseChatReturn {
     }
   }, []);
 
-  // Completion drain: let the remaining buffer finish revealing
-  // smoothly instead of snapping. Used by onDone only.
+  // Completion drain: let the remaining buffer finish revealing at
+  // the same constant rate instead of snapping. Used by onDone only.
   const finishStreamDrain = useCallback(() => {
     if (rafRef.current !== null) {
       cancelAnimationFrame(rafRef.current);
@@ -131,9 +124,9 @@ export function useChat(): UseChatReturn {
       const pending = pendingRef.current;
       const shown = shownRef.current;
       if (shown < pending.length) {
-        const step = Math.min(CHARS_PER_FRAME * 2, pending.length - shown);
-        shownRef.current = shown + step;
-        const content = pending.slice(0, shownRef.current);
+        const next = Math.min(shown + CHARS_PER_FRAME, pending.length);
+        shownRef.current = next;
+        const content = pending.slice(0, next);
         const id = assistantIdRef.current;
         setState((prev) => ({
           ...prev,

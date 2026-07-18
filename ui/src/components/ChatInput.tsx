@@ -36,8 +36,7 @@ export function ChatInput({ status, onSend, onCancel }: ChatInputProps) {
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder={isStreaming ? "Waiting for response..." : "Ask about the documents\u2026"}
-        disabled={isStreaming}
+        placeholder={isStreaming ? "Type your next question\u2026" : "Ask about the documents\u2026"}
         aria-label="Chat message input"
       />
       {isStreaming ? (

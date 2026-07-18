@@ -34,10 +34,11 @@
 }
 
 :root {
-  /* --- Surfaces (three distinct planes) --- */
-  --bg: #e2dcd0;          /* chat canvas: warm mid-tone */
+  /* --- Surfaces (four-step ladder) --- */
+  --bg-body: #d5cec0;     /* behind the app: deepest warm */
+  --bg: #e2dcd0;           /* chat canvas: mid-tone */
   --surface: #ffffff;      /* header + bubbles: white */
-  --surface-2: #f7f5f0;   /* rail + secondary: near-white, distinct from canvas */
+  --surface-2: #f7f5f0;   /* rail + secondary: near-white */
 
   /* --- Ink --- */
   --ink: #191710;

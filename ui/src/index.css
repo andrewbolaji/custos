@@ -26,18 +26,19 @@ body {
   font-size: var(--text-base);
   line-height: 1.55;
   color: var(--ink);
-  background: var(--bg);
+  background: var(--bg-body);
   -webkit-font-smoothing: antialiased;
 }
 
 /* --- App layout --- */
 .app {
   max-width: var(--app-max);
+  height: 100dvh;
   margin: 0 auto;
-  min-height: 100vh;
   display: flex;
   flex-direction: column;
   background: var(--bg);
+  box-shadow: 0 0 0 1px var(--line), 0 4px 24px rgba(30, 25, 10, 0.08);
 }
 
 /* --- Demo banner --- */
@@ -124,12 +125,14 @@ body {
   grid-template-columns: 1fr 290px;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
 }
 
 .thread {
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--line);
+  min-height: 0;
 }
 
 /* --- Chat container --- */
@@ -705,9 +708,7 @@ body {
   color: var(--faint);
 }
 
-.composer input:disabled {
-  opacity: 0.5;
-}
+/* input is never disabled (typing allowed during streaming) */
 
 .send-btn {
   background: var(--cobalt);
