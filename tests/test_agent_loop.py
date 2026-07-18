@@ -308,3 +308,149 @@ class TestWrapToolOutput:
         wrapped = _wrap_tool_output(payload)
         assert "[TOOL OUTPUT - UNTRUSTED DATA]" in wrapped
         assert payload in wrapped
+
+
+# ---------------------------------------------------------------------------
+# Streaming invariant tests
+# ---------------------------------------------------------------------------
+
+@dataclass
+class FakeDelta:
+    text: str
+
+
+@dataclass
+class FakeStreamEvent:
+    type: str
+    delta: FakeDelta | None = None
+
+
+class FakeStreamContext:
+    """Mocks messages.stream() context manager yielding text deltas."""
+
+    def __init__(self, tokens: list[str], final_message: FakeResponse) -> None:
+        self._tokens = tokens
+        self._final_message = final_message
+
+    def __enter__(self) -> FakeStreamContext:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        pass
+
+    def __iter__(self):  # type: ignore[override]
+        for t in self._tokens:
+            yield FakeStreamEvent(
+                type="content_block_delta",
+                delta=FakeDelta(text=t),
+            )
+
+    def get_final_message(self) -> FakeResponse:
+        return self._final_message
+
+
+class TestStreamingInvariant:
+    """run_streaming must emit MULTIPLE text_delta events, not one blob."""
+
+    def test_streams_multiple_deltas(self) -> None:
+        """Several LLM tokens must produce several text_delta events."""
+        llm = ClaudeLLM.__new__(ClaudeLLM)
+        llm._model = "test"
+        llm._max_tokens = 1024
+        llm._temperature = 0.1
+
+        tokens = ["The ", "PTO ", "policy ", "is ", "10 days."]
+        final_msg = FakeResponse(content=[FakeTextBlock(text="".join(tokens))])
+        mock_client = MagicMock()
+        llm._client = mock_client
+        mock_client.messages.stream.return_value = FakeStreamContext(tokens, final_msg)
+
+        registry = ToolRegistry()
+        loop = AgentLoop(llm=llm, registry=registry)
+        events = list(loop.run_streaming(_make_prompt_parts(), "PTO?"))
+
+        text_deltas = [e for e in events if e.kind == "text_delta"]
+        assert len(text_deltas) > 1, (
+            f"Expected multiple text_delta events, got {len(text_deltas)}. "
+            "Streaming must not collapse tokens into one blob."
+        )
+        reconstructed = "".join(e.data["text"] for e in text_deltas)
+        assert "PTO" in reconstructed
+        assert "10 days" in reconstructed
+
+    def test_citations_block_stripped_from_stream(self) -> None:
+        """The ```citations``` block must never appear in text_delta events."""
+        llm = ClaudeLLM.__new__(ClaudeLLM)
+        llm._model = "test"
+        llm._max_tokens = 1024
+        llm._temperature = 0.1
+
+        tokens = [
+            "The answer ",
+            "is 10 days.",
+            "\n\n```",
+            "citations\n",
+            '["c1_x"]',
+            "\n```",
+        ]
+        final_msg = FakeResponse(content=[FakeTextBlock(text="".join(tokens))])
+        mock_client = MagicMock()
+        llm._client = mock_client
+        mock_client.messages.stream.return_value = FakeStreamContext(tokens, final_msg)
+
+        registry = ToolRegistry()
+        loop = AgentLoop(llm=llm, registry=registry)
+        events = list(loop.run_streaming(_make_prompt_parts(), "PTO?"))
+
+        text_deltas = [e for e in events if e.kind == "text_delta"]
+        full_streamed = "".join(e.data["text"] for e in text_deltas)
+        assert "```" not in full_streamed, f"Fence leaked into stream: {full_streamed!r}"
+        assert "citations" not in full_streamed.lower(), (
+            f"Citations block leaked: {full_streamed!r}"
+        )
+        assert "c1_x" not in full_streamed, f"Chunk ID leaked: {full_streamed!r}"
+        assert "10 days" in full_streamed
+
+    def test_inline_chunk_ids_stripped_from_stream(self) -> None:
+        """Inline [chunk_id] markers must not appear in streamed text."""
+        llm = ClaudeLLM.__new__(ClaudeLLM)
+        llm._model = "test"
+        llm._max_tokens = 1024
+        llm._temperature = 0.1
+
+        tokens = ["PTO is 10 days", " [c1_x]", " per year."]
+        final_msg = FakeResponse(content=[FakeTextBlock(text="".join(tokens))])
+        mock_client = MagicMock()
+        llm._client = mock_client
+        mock_client.messages.stream.return_value = FakeStreamContext(tokens, final_msg)
+
+        registry = ToolRegistry()
+        loop = AgentLoop(llm=llm, registry=registry)
+        events = list(loop.run_streaming(_make_prompt_parts(), "PTO?"))
+
+        text_deltas = [e for e in events if e.kind == "text_delta"]
+        full_streamed = "".join(e.data["text"] for e in text_deltas)
+        assert "[c1_x]" not in full_streamed, f"Chunk ID leaked: {full_streamed!r}"
+        assert "10 days" in full_streamed
+
+    def test_em_dashes_replaced_in_stream(self) -> None:
+        """Em/en dashes must be replaced in streamed tokens."""
+        llm = ClaudeLLM.__new__(ClaudeLLM)
+        llm._model = "test"
+        llm._max_tokens = 1024
+        llm._temperature = 0.1
+
+        tokens = ["The policy", "\u2014", " 10 days", "\u2013", " is clear."]
+        final_msg = FakeResponse(content=[FakeTextBlock(text="".join(tokens))])
+        mock_client = MagicMock()
+        llm._client = mock_client
+        mock_client.messages.stream.return_value = FakeStreamContext(tokens, final_msg)
+
+        registry = ToolRegistry()
+        loop = AgentLoop(llm=llm, registry=registry)
+        events = list(loop.run_streaming(_make_prompt_parts(), "PTO?"))
+
+        text_deltas = [e for e in events if e.kind == "text_delta"]
+        full_streamed = "".join(e.data["text"] for e in text_deltas)
+        assert "\u2014" not in full_streamed, "Em dash leaked"
+        assert "\u2013" not in full_streamed, "En dash leaked"

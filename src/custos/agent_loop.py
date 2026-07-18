@@ -357,20 +357,56 @@ class AgentLoop:
                     })
 
             if not tool_use_blocks:
-                # Final answer. Resolve citations from the full raw text,
-                # then emit only the cleaned answer text (no ```citations```
-                # block, no inline [chunk_id] markers) as deltas.
+                # Final answer. Stream cleaned tokens to the client in
+                # real time using a trailing guard buffer. The buffer
+                # holds the last ~20 chars so an opening code fence
+                # (```citations) can be detected before it leaks.
                 full_text = "".join(buffered_text)
+                fence_hit = False
+                guard = ""  # trailing guard buffer
+                guard_size = 20
+
+                for token in buffered_text:
+                    guard += token
+                    # Check if the guard contains a fence opener
+                    if "```" in guard:
+                        # Emit everything before the fence, discard the rest
+                        fence_pos = guard.index("```")
+                        pre_fence = guard[:fence_pos]
+                        if pre_fence:
+                            cleaned = ClaudeLLM.clean_streaming_token(pre_fence)
+                            if cleaned:
+                                yield AgentEvent(
+                                    kind="text_delta",
+                                    data={"text": cleaned},
+                                )
+                        fence_hit = True
+                        break
+
+                    # Forward text that is safely past the guard window
+                    if len(guard) > guard_size:
+                        emit = guard[:-guard_size]
+                        guard = guard[-guard_size:]
+                        cleaned = ClaudeLLM.clean_streaming_token(emit)
+                        if cleaned:
+                            yield AgentEvent(
+                                kind="text_delta",
+                                data={"text": cleaned},
+                            )
+
+                # Flush remaining guard if no fence was found
+                if not fence_hit and guard:
+                    cleaned = ClaudeLLM.clean_streaming_token(guard)
+                    if cleaned:
+                        yield AgentEvent(
+                            kind="text_delta",
+                            data={"text": cleaned},
+                        )
+
+                # Resolve citations from the full raw text
                 answer = ClaudeLLM.resolve_response(
                     full_text, prompt_parts.chunk_lookup
                 )
-                # Emit the cleaned text as a single delta (the raw token
-                # stream would leak citation artifacts token-by-token).
-                if answer.text:
-                    yield AgentEvent(
-                        kind="text_delta",
-                        data={"text": answer.text},
-                    )
                 if answer.citations:
                     yield AgentEvent(
                         kind="citations",
