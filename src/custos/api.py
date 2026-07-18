@@ -455,6 +455,13 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourc
                         "event": "token",
                         "data": json.dumps({"text": event.data.get("text", "")}),
                     }
+                elif event.kind == "text_replace":
+                    # Reconciliation: resolve_response produced different
+                    # text than what was streamed. Replace displayed text.
+                    yield {
+                        "event": "text_replace",
+                        "data": json.dumps({"text": event.data.get("text", "")}),
+                    }
                 elif event.kind == "tool_use":
                     # tool_use fires when a read-only tool starts executing.
                     # We emit a single SSE event here; the tool_result event

@@ -119,6 +119,16 @@ export function useChat(): UseChatReturn {
             ),
           }));
         },
+        onTextReplace(text: string) {
+          // Reconciliation: resolve_response produced different text
+          // than what was streamed. Replace the entire displayed text.
+          setState((prev) => ({
+            ...prev,
+            messages: prev.messages.map((m) =>
+              m.id === assistantId ? { ...m, content: text } : m,
+            ),
+          }));
+        },
         onCitations(citations: Citation[]) {
           setState((prev) => ({
             ...prev,

@@ -8,6 +8,7 @@ const API_BASE = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000";
 
 export interface StreamCallbacks {
   onToken: (text: string) => void;
+  onTextReplace: (text: string) => void;
   onCitations: (citations: Citation[]) => void;
   onToolUse: (event: ToolUseEvent) => void;
   onConfirmAction: (pending: PendingConfirmation) => void;
@@ -157,6 +158,9 @@ function handleSSEEvent(
     switch (event) {
       case "token":
         callbacks.onToken(data.text ?? "");
+        break;
+      case "text_replace":
+        callbacks.onTextReplace(data.text ?? "");
         break;
       case "citations":
         callbacks.onCitations(data.citations ?? []);

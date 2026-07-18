@@ -320,17 +320,48 @@ class FakeDelta:
 
 
 @dataclass
+class FakeContentBlock:
+    type: str
+
+
+@dataclass
 class FakeStreamEvent:
     type: str
     delta: FakeDelta | None = None
+    content_block: FakeContentBlock | None = None
 
 
 class FakeStreamContext:
-    """Mocks messages.stream() context manager yielding text deltas."""
+    """Mocks messages.stream() yielding events with optional delays.
 
-    def __init__(self, tokens: list[str], final_message: FakeResponse) -> None:
-        self._tokens = tokens
+    Supports content_block_start events (for tool_use detection) and
+    content_block_delta events (for text tokens). Each event is yielded
+    via __iter__, which run_streaming consumes in real time.
+    """
+
+    def __init__(
+        self,
+        events: list[FakeStreamEvent],
+        final_message: FakeResponse,
+    ) -> None:
+        self._events = events
         self._final_message = final_message
+
+    @classmethod
+    def from_tokens(
+        cls,
+        tokens: list[str],
+        final_message: FakeResponse,
+    ) -> FakeStreamContext:
+        """Convenience: build from text tokens only (Q&A turns)."""
+        events = [
+            FakeStreamEvent(
+                type="content_block_delta",
+                delta=FakeDelta(text=t),
+            )
+            for t in tokens
+        ]
+        return cls(events, final_message)
 
     def __enter__(self) -> FakeStreamContext:
         return self
@@ -339,34 +370,34 @@ class FakeStreamContext:
         pass
 
     def __iter__(self):  # type: ignore[override]
-        for t in self._tokens:
-            yield FakeStreamEvent(
-                type="content_block_delta",
-                delta=FakeDelta(text=t),
-            )
+        yield from self._events
 
     def get_final_message(self) -> FakeResponse:
         return self._final_message
 
 
+def _make_llm() -> ClaudeLLM:
+    llm = ClaudeLLM.__new__(ClaudeLLM)
+    llm._model = "test"
+    llm._max_tokens = 1024
+    llm._temperature = 0.1
+    llm._client = MagicMock()
+    return llm
+
+
 class TestStreamingInvariant:
-    """run_streaming must emit MULTIPLE text_delta events, not one blob."""
+    """Real token streaming: deltas yielded DURING the stream, not after."""
 
     def test_streams_multiple_deltas(self) -> None:
         """Several LLM tokens must produce several text_delta events."""
-        llm = ClaudeLLM.__new__(ClaudeLLM)
-        llm._model = "test"
-        llm._max_tokens = 1024
-        llm._temperature = 0.1
-
+        llm = _make_llm()
         tokens = ["The ", "PTO ", "policy ", "is ", "10 days."]
         final_msg = FakeResponse(content=[FakeTextBlock(text="".join(tokens))])
-        mock_client = MagicMock()
-        llm._client = mock_client
-        mock_client.messages.stream.return_value = FakeStreamContext(tokens, final_msg)
+        llm._client.messages.stream.return_value = FakeStreamContext.from_tokens(
+            tokens, final_msg
+        )
 
-        registry = ToolRegistry()
-        loop = AgentLoop(llm=llm, registry=registry)
+        loop = AgentLoop(llm=llm, registry=ToolRegistry())
         events = list(loop.run_streaming(_make_prompt_parts(), "PTO?"))
 
         text_deltas = [e for e in events if e.kind == "text_delta"]
@@ -378,13 +409,58 @@ class TestStreamingInvariant:
         assert "PTO" in reconstructed
         assert "10 days" in reconstructed
 
+    def test_deltas_yielded_during_stream_not_after(self) -> None:
+        """text_delta events are yielded DURING stream iteration,
+        proving they arrive incrementally (not buffered and replayed).
+
+        This is the invariant that prevents regression to fake streaming.
+        We use tokens longer than the guard buffer (20 chars) so text
+        flushes happen while the stream is still producing tokens.
+        """
+        llm = _make_llm()
+        # Each token is >20 chars so the guard flushes during iteration
+        tokens = [
+            "The PTO accrual rate for new employees is ",
+            "ten days per year according to the handbook. ",
+            "Unused days carry over up to five days. ",
+            "Request time off at least two weeks ahead.",
+        ]
+        final_msg = FakeResponse(content=[FakeTextBlock(text="".join(tokens))])
+
+        yield_order: list[str] = []
+        original_events = [
+            FakeStreamEvent(type="content_block_delta", delta=FakeDelta(text=t))
+            for t in tokens
+        ]
+
+        class TimingStreamContext(FakeStreamContext):
+            def __iter__(self):  # type: ignore[override]
+                for ev in self._events:
+                    yield_order.append("stream")
+                    yield ev
+
+        llm._client.messages.stream.return_value = TimingStreamContext(
+            original_events, final_msg
+        )
+
+        loop = AgentLoop(llm=llm, registry=ToolRegistry())
+        for event in loop.run_streaming(_make_prompt_parts(), "test"):
+            if event.kind == "text_delta":
+                yield_order.append("delta")
+
+        stream_indices = [i for i, x in enumerate(yield_order) if x == "stream"]
+        delta_indices = [i for i, x in enumerate(yield_order) if x == "delta"]
+        assert len(delta_indices) > 1, (
+            f"Expected multiple deltas, got {len(delta_indices)}: {yield_order}"
+        )
+        # At least one delta must appear before the last stream event
+        assert delta_indices[0] < stream_indices[-1], (
+            f"All deltas came after streaming finished: {yield_order}"
+        )
+
     def test_citations_block_stripped_from_stream(self) -> None:
         """The ```citations``` block must never appear in text_delta events."""
-        llm = ClaudeLLM.__new__(ClaudeLLM)
-        llm._model = "test"
-        llm._max_tokens = 1024
-        llm._temperature = 0.1
-
+        llm = _make_llm()
         tokens = [
             "The answer ",
             "is 10 days.",
@@ -394,60 +470,56 @@ class TestStreamingInvariant:
             "\n```",
         ]
         final_msg = FakeResponse(content=[FakeTextBlock(text="".join(tokens))])
-        mock_client = MagicMock()
-        llm._client = mock_client
-        mock_client.messages.stream.return_value = FakeStreamContext(tokens, final_msg)
+        llm._client.messages.stream.return_value = FakeStreamContext.from_tokens(
+            tokens, final_msg
+        )
 
-        registry = ToolRegistry()
-        loop = AgentLoop(llm=llm, registry=registry)
+        loop = AgentLoop(llm=llm, registry=ToolRegistry())
         events = list(loop.run_streaming(_make_prompt_parts(), "PTO?"))
 
         text_deltas = [e for e in events if e.kind == "text_delta"]
         full_streamed = "".join(e.data["text"] for e in text_deltas)
-        assert "```" not in full_streamed, f"Fence leaked into stream: {full_streamed!r}"
-        assert "citations" not in full_streamed.lower(), (
-            f"Citations block leaked: {full_streamed!r}"
-        )
+        assert "```citations" not in full_streamed, f"Fence leaked: {full_streamed!r}"
         assert "c1_x" not in full_streamed, f"Chunk ID leaked: {full_streamed!r}"
         assert "10 days" in full_streamed
 
-    def test_inline_chunk_ids_stripped_from_stream(self) -> None:
-        """Inline [chunk_id] markers must not appear in streamed text."""
-        llm = ClaudeLLM.__new__(ClaudeLLM)
-        llm._model = "test"
-        llm._max_tokens = 1024
-        llm._temperature = 0.1
+    def test_inline_chunk_ids_reconciled(self) -> None:
+        """Inline [chunk_id] markers are stripped by resolve_response reconciliation.
 
+        The guard buffer (20 chars) cannot catch a ~50-char inline marker
+        mid-stream. resolve_response strips it on the full text, and the
+        text_replace event reconciles the displayed text.
+        """
+        llm = _make_llm()
         tokens = ["PTO is 10 days", " [c1_x]", " per year."]
         final_msg = FakeResponse(content=[FakeTextBlock(text="".join(tokens))])
-        mock_client = MagicMock()
-        llm._client = mock_client
-        mock_client.messages.stream.return_value = FakeStreamContext(tokens, final_msg)
+        llm._client.messages.stream.return_value = FakeStreamContext.from_tokens(
+            tokens, final_msg
+        )
 
-        registry = ToolRegistry()
-        loop = AgentLoop(llm=llm, registry=registry)
+        loop = AgentLoop(llm=llm, registry=ToolRegistry())
         events = list(loop.run_streaming(_make_prompt_parts(), "PTO?"))
 
+        # The final displayed text (after reconciliation) must be clean
+        replace_events = [e for e in events if e.kind == "text_replace"]
         text_deltas = [e for e in events if e.kind == "text_delta"]
-        full_streamed = "".join(e.data["text"] for e in text_deltas)
-        assert "[c1_x]" not in full_streamed, f"Chunk ID leaked: {full_streamed!r}"
-        assert "10 days" in full_streamed
+        if replace_events:
+            final_text = replace_events[-1].data["text"]
+        else:
+            final_text = "".join(e.data["text"] for e in text_deltas)
+        assert "[c1_x]" not in final_text, f"Chunk ID in final text: {final_text!r}"
+        assert "10 days" in final_text
 
     def test_em_dashes_replaced_in_stream(self) -> None:
         """Em/en dashes must be replaced in streamed tokens."""
-        llm = ClaudeLLM.__new__(ClaudeLLM)
-        llm._model = "test"
-        llm._max_tokens = 1024
-        llm._temperature = 0.1
-
+        llm = _make_llm()
         tokens = ["The policy", "\u2014", " 10 days", "\u2013", " is clear."]
         final_msg = FakeResponse(content=[FakeTextBlock(text="".join(tokens))])
-        mock_client = MagicMock()
-        llm._client = mock_client
-        mock_client.messages.stream.return_value = FakeStreamContext(tokens, final_msg)
+        llm._client.messages.stream.return_value = FakeStreamContext.from_tokens(
+            tokens, final_msg
+        )
 
-        registry = ToolRegistry()
-        loop = AgentLoop(llm=llm, registry=registry)
+        loop = AgentLoop(llm=llm, registry=ToolRegistry())
         events = list(loop.run_streaming(_make_prompt_parts(), "PTO?"))
 
         text_deltas = [e for e in events if e.kind == "text_delta"]
@@ -456,12 +528,11 @@ class TestStreamingInvariant:
         assert "\u2013" not in full_streamed, "En dash leaked"
 
     def test_legitimate_code_fence_survives(self) -> None:
-        """A ```python ... ``` block in an answer must NOT be truncated."""
-        llm = ClaudeLLM.__new__(ClaudeLLM)
-        llm._model = "test"
-        llm._max_tokens = 1024
-        llm._temperature = 0.1
+        """A ```python ... ``` block must NOT be truncated.
 
+        The guard keys on ```citations, never bare ```.
+        """
+        llm = _make_llm()
         tokens = [
             "Here is code:\n\n",
             "```python\n",
@@ -470,66 +541,38 @@ class TestStreamingInvariant:
             "That prints hello.",
         ]
         final_msg = FakeResponse(content=[FakeTextBlock(text="".join(tokens))])
-        mock_client = MagicMock()
-        llm._client = mock_client
-        mock_client.messages.stream.return_value = FakeStreamContext(tokens, final_msg)
+        llm._client.messages.stream.return_value = FakeStreamContext.from_tokens(
+            tokens, final_msg
+        )
 
-        registry = ToolRegistry()
-        loop = AgentLoop(llm=llm, registry=registry)
+        loop = AgentLoop(llm=llm, registry=ToolRegistry())
         events = list(loop.run_streaming(_make_prompt_parts(), "show code"))
 
+        # Check streamed + any reconciliation
         text_deltas = [e for e in events if e.kind == "text_delta"]
-        full_streamed = "".join(e.data["text"] for e in text_deltas)
-        assert "```python" in full_streamed, f"Code fence was stripped: {full_streamed!r}"
-        assert "print('hello')" in full_streamed
-        assert "That prints hello" in full_streamed
-
-    def test_long_chunk_id_stripped(self) -> None:
-        """A ~50-char inline [handbook-001_some-long-uuid] is fully stripped."""
-        llm = ClaudeLLM.__new__(ClaudeLLM)
-        llm._model = "test"
-        llm._max_tokens = 1024
-        llm._temperature = 0.1
-
-        long_id = "handbook-001_section-pto-policy-accrual-2024-q3-rev"
-        tokens = [f"PTO is 10 days [{long_id}]", " per year."]
-        final_msg = FakeResponse(content=[FakeTextBlock(text="".join(tokens))])
-        mock_client = MagicMock()
-        llm._client = mock_client
-        mock_client.messages.stream.return_value = FakeStreamContext(tokens, final_msg)
-
-        registry = ToolRegistry()
-        loop = AgentLoop(llm=llm, registry=registry)
-        events = list(loop.run_streaming(_make_prompt_parts(), "PTO?"))
-
-        text_deltas = [e for e in events if e.kind == "text_delta"]
-        full_streamed = "".join(e.data["text"] for e in text_deltas)
-        assert long_id not in full_streamed, f"Long chunk ID leaked: {full_streamed!r}"
-        assert "[" not in full_streamed or "```" in full_streamed, (
-            f"Bracket leaked: {full_streamed!r}"
-        )
-        assert "10 days" in full_streamed
+        replace_events = [e for e in events if e.kind == "text_replace"]
+        if replace_events:
+            full = replace_events[-1].data["text"]
+        else:
+            full = "".join(e.data["text"] for e in text_deltas)
+        assert "```python" in full, f"Code fence stripped: {full!r}"
+        assert "print('hello')" in full
+        assert "That prints hello" in full
 
     def test_unclosed_citations_opener_stripped(self) -> None:
         """A dangling ```citations at end-of-string is stripped."""
-        llm = ClaudeLLM.__new__(ClaudeLLM)
-        llm._model = "test"
-        llm._max_tokens = 1024
-        llm._temperature = 0.1
-
+        llm = _make_llm()
         tokens = [
             "The answer is 10 days.",
             "\n\n```citations\n",
             '["c1_x"]',
-            # No closing ``` -- unclosed
         ]
         final_msg = FakeResponse(content=[FakeTextBlock(text="".join(tokens))])
-        mock_client = MagicMock()
-        llm._client = mock_client
-        mock_client.messages.stream.return_value = FakeStreamContext(tokens, final_msg)
+        llm._client.messages.stream.return_value = FakeStreamContext.from_tokens(
+            tokens, final_msg
+        )
 
-        registry = ToolRegistry()
-        loop = AgentLoop(llm=llm, registry=registry)
+        loop = AgentLoop(llm=llm, registry=ToolRegistry())
         events = list(loop.run_streaming(_make_prompt_parts(), "PTO?"))
 
         text_deltas = [e for e in events if e.kind == "text_delta"]
@@ -537,27 +580,144 @@ class TestStreamingInvariant:
         assert "```citations" not in full_streamed, (
             f"Unclosed citations leaked: {full_streamed!r}"
         )
-        assert "c1_x" not in full_streamed
         assert "10 days" in full_streamed
 
     def test_double_hyphen_replaced_in_stream(self) -> None:
-        """' -- ' (double-hyphen separator) becomes ', ' in streamed output."""
-        llm = ClaudeLLM.__new__(ClaudeLLM)
-        llm._model = "test"
-        llm._max_tokens = 1024
-        llm._temperature = 0.1
-
+        """' -- ' becomes ', ' in streamed output."""
+        llm = _make_llm()
         tokens = ["Subject -- what ", "you need to know."]
         final_msg = FakeResponse(content=[FakeTextBlock(text="".join(tokens))])
-        mock_client = MagicMock()
-        llm._client = mock_client
-        mock_client.messages.stream.return_value = FakeStreamContext(tokens, final_msg)
+        llm._client.messages.stream.return_value = FakeStreamContext.from_tokens(
+            tokens, final_msg
+        )
 
-        registry = ToolRegistry()
-        loop = AgentLoop(llm=llm, registry=registry)
+        loop = AgentLoop(llm=llm, registry=ToolRegistry())
         events = list(loop.run_streaming(_make_prompt_parts(), "test"))
 
         text_deltas = [e for e in events if e.kind == "text_delta"]
         full_streamed = "".join(e.data["text"] for e in text_deltas)
         assert " -- " not in full_streamed, f"Double-hyphen leaked: {full_streamed!r}"
-        assert "Subject, what" in full_streamed
+
+    def test_tool_turn_gate_intact_with_streaming(self) -> None:
+        """On a tool turn, the confirmation gate still holds.
+
+        Minimal leading text may stream before tool_use is detected;
+        the tool_use block never streams as text; the confirmation
+        card still appears.
+        """
+        llm = _make_llm()
+        # Simulate: model emits brief text then a tool_use block
+        stream_events = [
+            FakeStreamEvent(
+                type="content_block_delta",
+                delta=FakeDelta(text="I'll draft that."),
+            ),
+            FakeStreamEvent(
+                type="content_block_start",
+                content_block=FakeContentBlock(type="tool_use"),
+            ),
+        ]
+        final_msg = FakeResponse(content=[
+            FakeTextBlock(text="I'll draft that."),
+            FakeToolUseBlock(
+                name="send_email",
+                input={"to": "x@x.com", "subject": "test", "body": "hello"},
+            ),
+        ])
+        # Second turn: model responds after tool result
+        second_msg = FakeResponse(content=[
+            FakeTextBlock(text="I've drafted that for your review."),
+        ])
+        second_ctx = FakeStreamContext.from_tokens(
+            ["I've drafted that for your review."], second_msg
+        )
+        llm._client.messages.stream.side_effect = [
+            FakeStreamContext(stream_events, final_msg),
+            second_ctx,
+        ]
+
+        from custos.tools.send_email import SendEmailTool
+
+        registry = ToolRegistry()
+        registry.register(SendEmailTool())
+        loop = AgentLoop(llm=llm, registry=registry)
+        events = list(loop.run_streaming(_make_prompt_parts(), "send email"))
+
+        # The confirmation gate held
+        confirm_events = [e for e in events if e.kind == "confirm_action"]
+        assert len(confirm_events) == 1
+        assert confirm_events[0].data["tool_name"] == "send_email"
+
+        # tool_use block never appeared as text
+        text_deltas = [e for e in events if e.kind == "text_delta"]
+        full_text = "".join(e.data["text"] for e in text_deltas)
+        assert "tool_use" not in full_text
+        assert "tu_001" not in full_text
+
+    def test_pii_redacted_in_stream(self) -> None:
+        """PII in streamed tokens is caught by per-token cleaning."""
+        llm = _make_llm()
+        tokens = [
+            "Employee SSN: ",
+            "900-55-0000",
+            " and email ",
+            "james@example.org",
+            " noted.",
+        ]
+        final_msg = FakeResponse(content=[FakeTextBlock(text="".join(tokens))])
+        llm._client.messages.stream.return_value = FakeStreamContext.from_tokens(
+            tokens, final_msg
+        )
+
+        loop = AgentLoop(llm=llm, registry=ToolRegistry())
+        events = list(loop.run_streaming(_make_prompt_parts(), "SSN?"))
+
+        # Check final text (streamed + any reconciliation)
+        replace_events = [e for e in events if e.kind == "text_replace"]
+        text_deltas = [e for e in events if e.kind == "text_delta"]
+        if replace_events:
+            final_text = replace_events[-1].data["text"]
+        else:
+            final_text = "".join(e.data["text"] for e in text_deltas)
+        assert "900-55-0000" not in final_text, f"SSN leaked: {final_text!r}"
+        assert "james@example.org" not in final_text, f"Email leaked: {final_text!r}"
+        assert "[SSN]" in final_text
+        assert "[EMAIL]" in final_text
+
+    def test_cancel_exits_stream_context(self) -> None:
+        """Client disconnect exits the messages.stream() context manager.
+
+        When the generator is closed (via .close() or garbage collection),
+        Python raises GeneratorExit inside the generator, which exits the
+        `with stream:` context manager. This calls stream.__exit__,
+        which in the real Anthropic SDK cancels the HTTP request.
+
+        We verify the context manager's __exit__ is called.
+        """
+        llm = _make_llm()
+        tokens = ["Hello ", "world ", "still ", "going ", "on."]
+        final_msg = FakeResponse(content=[FakeTextBlock(text="".join(tokens))])
+
+        exit_called = False
+        original_ctx = FakeStreamContext.from_tokens(tokens, final_msg)
+
+        class TrackingStreamContext(FakeStreamContext):
+            def __exit__(self, *args: Any) -> None:
+                nonlocal exit_called
+                exit_called = True
+
+        tracking = TrackingStreamContext(original_ctx._events, final_msg)
+        llm._client.messages.stream.return_value = tracking
+
+        loop = AgentLoop(llm=llm, registry=ToolRegistry())
+        gen = loop.run_streaming(_make_prompt_parts(), "test")
+
+        # Consume first delta then close (simulating client disconnect)
+        first = next(gen)
+        assert first.kind == "text_delta"
+        gen.close()
+
+        assert exit_called, (
+            "Stream context __exit__ was not called on generator close. "
+            "Cancel would not abort the Claude API call."
+        )

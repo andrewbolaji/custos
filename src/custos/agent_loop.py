@@ -22,15 +22,20 @@ SECURITY INVARIANTS:
 - The loop is bounded by max_steps and timeout_seconds. An injected or
   runaway loop cannot spin indefinitely (threat T7).
 
-ONE IMPLEMENTATION, BOTH ENDPOINTS:
-Both /api/chat and /api/chat/stream call the same run() method. The loop
-is not forked into two copies. Streaming wraps the same loop with SSE
-event emission.
+STREAMING:
+run_streaming forwards text deltas to the caller AS the model generates
+them (real token streaming, not replay). A 20-char trailing guard buffer
+catches ```citations fences and applies per-token PII/dash cleaning.
+On tool turns, minimal leading text may stream before the tool_use block
+is detected; the confirmation gate is independent of streaming.
+resolve_response runs on the full text at stream end as the authority;
+the final text_delta reconciles any divergence.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections.abc import Generator
 from dataclasses import dataclass, field
@@ -41,6 +46,7 @@ import anthropic
 from custos.interfaces import Citation, ToolCall, ToolResult
 from custos.llm import ClaudeLLM, PromptParts
 from custos.pending_actions import PendingActionStore
+from custos.pii import PIIRedactor
 from custos.tool_registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -49,6 +55,31 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_STEPS = 5
 # Maximum wall-clock seconds for the entire agent loop (threat T7)
 DEFAULT_TIMEOUT_SECONDS = 30
+
+# Guard buffer size for streaming cleaning. Sized to catch:
+# - SSN: ~11 chars, Phone: ~14, ```citations fence: 12 chars
+# A full-length inline [chunk_id] (~50 chars) exceeds the guard;
+# the system prompt forbids inline markers and resolve_response
+# strips them on the full text, so at worst a rare fragment flashes.
+_GUARD_SIZE = 20
+
+# Per-token cleaning patterns (keyed on ```citations, NEVER bare ```)
+_CITATIONS_FENCE_RE = re.compile(r"```citations")
+_pii_redactor = PIIRedactor()
+
+
+def _clean_guard_text(text: str) -> str:
+    """Apply per-token cleaning: PII redaction, dash replacement.
+
+    Does NOT strip citations (the guard buffer handles that by
+    detecting the ```citations fence). Does NOT strip inline
+    [chunk_id] markers (they exceed the guard size; resolve_response
+    handles them on the full text).
+    """
+    cleaned = _pii_redactor.redact(text)
+    cleaned = cleaned.replace("\u2014", ", ").replace("\u2013", "-")
+    cleaned = re.sub(r" -- ", ", ", cleaned)
+    return cleaned
 
 
 @dataclass
@@ -197,9 +228,6 @@ class AgentLoop:
                 )
 
                 if tool.side_effectful:
-                    # HARD GATE: side-effectful tools do NOT execute.
-                    # They produce a confirm_action event. The API
-                    # layer surfaces this to the user.
                     events.append(AgentEvent(
                         kind="confirm_action",
                         data={
@@ -212,7 +240,6 @@ class AgentLoop:
                         "Side-effectful tool blocked pending confirmation: %s",
                         call.tool_name,
                     )
-                    # Return a refusal to the model so it can continue
                     tool_result_contents.append({
                         "type": "tool_result",
                         "tool_use_id": tu["id"],
@@ -227,7 +254,6 @@ class AgentLoop:
                     })
                     continue
 
-                # Read-only tool: execute directly
                 events.append(AgentEvent(
                     kind="tool_use",
                     data={"tool_name": call.tool_name},
@@ -251,7 +277,6 @@ class AgentLoop:
                 ))
                 tool_results.append(result)
 
-                # Feed tool output back as UNTRUSTED DATA
                 output_str = str(result.output)
                 if result.simulated:
                     output_str += "\n(simulated)"
@@ -261,18 +286,15 @@ class AgentLoop:
                     "content": _wrap_tool_output(output_str),
                 })
 
-            # Add tool results to messages for the next turn
             messages.append({"role": "user", "content": tool_result_contents})
 
         else:
-            # Max steps reached without a final text response
             events.append(AgentEvent(
                 kind="limit_hit",
                 data={"reason": "max_steps", "steps": self._max_steps},
             ))
             logger.warning("Agent loop hit max steps: %d", self._max_steps)
 
-        # If we exit the loop without returning, produce a fallback
         final_text = (
             "I was not able to complete the request within the allowed number "
             "of steps. Please try rephrasing your question."
@@ -294,25 +316,24 @@ class AgentLoop:
         pending_store: PendingActionStore | None = None,
         history: list[dict[str, Any]] | None = None,
     ) -> Generator[AgentEvent, None, None]:
-        """Execute the agent loop, streaming text deltas from the final turn.
+        """Execute the agent loop with real token streaming.
 
-        Yields AgentEvent objects:
-        - "text_delta": a token from the final answer (streamed in real time)
-        - "tool_use" / "tool_result": tool activity (emitted before streaming)
-        - "confirm_action": side-effectful tool needs confirmation (has action_id)
-        - "citations": resolved citations (emitted after the final text)
-        - "refused": if the answer is a refusal
-        - "limit_hit": if bounds are exceeded
+        Text deltas are forwarded to the caller AS the model generates
+        them, not buffered and replayed. A trailing guard buffer (20
+        chars, keyed on ```citations not bare ```) catches citation
+        fences and applies per-token PII/dash cleaning.
+
+        On tool turns, text streams until a content_block_start with
+        type tool_use is detected, then forwarding stops. Minimal
+        leading text may have already streamed; this is harmless
+        because the confirmation gate is independent of streaming.
+
+        resolve_response runs on the full accumulated text at stream
+        end as the authority for citations, PII, and cleaning. If
+        the streamed text diverges from the cleaned text, a final
+        reconciliation delta is emitted.
 
         history: prior conversation turns (untrusted client input).
-        Prepended to the messages array for multi-turn context.
-
-        Each turn uses messages.stream(). Text deltas are buffered per
-        turn and only emitted if the turn ends without tool_use blocks.
-        This prevents premature narration ("I'll send the email") from
-        streaming to the user before a confirmation card appears.
-
-        The sync run() method is unchanged. This is additive, not a fork.
         """
         tool_results: list[ToolResult] = []
         messages: list[dict[str, Any]] = [
@@ -334,12 +355,17 @@ class AgentLoop:
                 )
                 return
 
-            # Stream this turn, buffering text until we know the stop reason.
-            # If the turn ends with tool_use, the text is internal thinking
-            # and must NOT be streamed (it could narrate "I'll send the
-            # email" before the confirmation card). Only text-only turns
-            # are final answers and get emitted as text_delta events.
-            buffered_text: list[str] = []
+            # Stream this turn with real token forwarding.
+            # - Text deltas are forwarded through a guard buffer
+            # - If a content_block_start with type=tool_use arrives,
+            #   stop forwarding text (tool turn detected)
+            # - The guard catches ```citations fences before they leak
+            accumulated_text: list[str] = []  # full raw text for resolve_response
+            streamed_text: list[str] = []     # what was actually sent to client
+            guard = ""                        # trailing guard buffer
+            tool_use_detected = False         # set when content_block_start type=tool_use
+            fence_hit = False                 # set when ```citations detected in guard
+
             with self._llm.client.messages.stream(
                 model=self._llm.model,
                 max_tokens=self._llm.max_tokens,
@@ -349,15 +375,81 @@ class AgentLoop:
                 tools=tools if tools else anthropic.NOT_GIVEN,  # type: ignore[arg-type]
             ) as stream:
                 for event in stream:
+                    # Detect tool_use block starting
+                    if (
+                        event.type == "content_block_start"
+                        and hasattr(event.content_block, "type")
+                        and event.content_block.type == "tool_use"
+                    ):
+                        tool_use_detected = True
+                        # Flush remaining guard as-is (tool turn text is brief)
+                        if guard and not fence_hit:
+                            cleaned = _clean_guard_text(guard)
+                            if cleaned:
+                                yield AgentEvent(
+                                    kind="text_delta",
+                                    data={"text": cleaned},
+                                )
+                                streamed_text.append(cleaned)
+                            guard = ""
+                        continue
+
+                    # Collect text deltas
                     if (
                         event.type == "content_block_delta"
                         and hasattr(event.delta, "text")
                     ):
-                        buffered_text.append(event.delta.text)
+                        token = event.delta.text
+                        accumulated_text.append(token)
+
+                        # If tool_use already detected or fence hit, don't forward
+                        if tool_use_detected or fence_hit:
+                            continue
+
+                        guard += token
+
+                        # Check for ```citations fence (NEVER bare ```)
+                        if _CITATIONS_FENCE_RE.search(guard):
+                            # Emit text before the fence, discard the rest
+                            fence_pos = guard.index("```citations")
+                            pre_fence = guard[:fence_pos]
+                            if pre_fence:
+                                cleaned = _clean_guard_text(pre_fence)
+                                if cleaned:
+                                    yield AgentEvent(
+                                        kind="text_delta",
+                                        data={"text": cleaned},
+                                    )
+                                    streamed_text.append(cleaned)
+                            fence_hit = True
+                            guard = ""
+                            continue
+
+                        # Forward text past the guard window
+                        if len(guard) > _GUARD_SIZE:
+                            emit = guard[:-_GUARD_SIZE]
+                            guard = guard[-_GUARD_SIZE:]
+                            cleaned = _clean_guard_text(emit)
+                            if cleaned:
+                                yield AgentEvent(
+                                    kind="text_delta",
+                                    data={"text": cleaned},
+                                )
+                                streamed_text.append(cleaned)
 
                 final_message = stream.get_final_message()
 
-            # Check if the model used tools
+            # Flush remaining guard if no fence was hit and no tool_use
+            if guard and not fence_hit and not tool_use_detected:
+                cleaned = _clean_guard_text(guard)
+                if cleaned:
+                    yield AgentEvent(
+                        kind="text_delta",
+                        data={"text": cleaned},
+                    )
+                    streamed_text.append(cleaned)
+
+            # Collect tool_use blocks from the final message
             tool_use_blocks: list[dict[str, Any]] = []
             for block in final_message.content:
                 if block.type == "tool_use":
@@ -368,25 +460,22 @@ class AgentLoop:
                     })
 
             if not tool_use_blocks:
-                # Final answer. All tokens are already collected in
-                # buffered_text. Run resolve_response on the complete
-                # text (reliable regex on full string, no straddle
-                # bugs) then re-chunk the cleaned text into word-level
-                # deltas so it still types on progressively.
-                full_text = "".join(buffered_text)
+                # Final answer. resolve_response is the authority.
+                full_text = "".join(accumulated_text)
                 answer = ClaudeLLM.resolve_response(
                     full_text, prompt_parts.chunk_lookup
                 )
 
-                # Re-chunk cleaned text into word-level deltas
-                if answer.text:
-                    words = answer.text.split(" ")
-                    for i, word in enumerate(words):
-                        chunk = word if i == len(words) - 1 else word + " "
-                        yield AgentEvent(
-                            kind="text_delta",
-                            data={"text": chunk},
-                        )
+                # Reconcile: if the streamed text differs from the
+                # authoritative cleaned text, emit a correction delta
+                # that replaces the entire displayed text.
+                already_streamed = "".join(streamed_text)
+                if already_streamed != answer.text:
+                    yield AgentEvent(
+                        kind="text_replace",
+                        data={"text": answer.text},
+                    )
+
                 if answer.citations:
                     yield AgentEvent(
                         kind="citations",
@@ -396,8 +485,7 @@ class AgentLoop:
                     yield AgentEvent(kind="refused", data={"text": answer.text})
                 return
 
-            # Tool-use turn -- process tools (text from this turn is
-            # internal thinking, not the final answer)
+            # Tool-use turn
             messages.append({"role": "assistant", "content": final_message.content})
             tool_result_contents: list[dict[str, Any]] = []
 
@@ -421,7 +509,6 @@ class AgentLoop:
                 )
 
                 if tool.side_effectful:
-                    # Create a PendingAction if store is available
                     action_id = ""
                     if pending_store is not None and session_id:
                         pending = pending_store.create(
@@ -508,12 +595,7 @@ class AgentLoop:
 
 
 def _wrap_tool_output(output: str) -> str:
-    """Wrap tool output in an untrusted-data envelope.
-
-    This framing tells the model to treat the content as data, not
-    instructions. It mirrors the same separation used for retrieved
-    document chunks in build_prompt().
-    """
+    """Wrap tool output in an untrusted-data envelope."""
     return (
         f"[TOOL OUTPUT - UNTRUSTED DATA]\n"
         f"{output}\n"
