@@ -453,6 +453,33 @@ body {
   line-height: 1.5;
 }
 
+/* --- Markdown tables --- */
+.md-content .table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+
+.md-content table {
+  width: 100%;
+  table-layout: auto;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.md-content th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--ink-2);
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.md-content td {
+  padding: 6px 12px;
+  color: var(--ink);
+}
+
 /* --- Typing cursor --- */
 .typing-cursor {
   display: inline-block;

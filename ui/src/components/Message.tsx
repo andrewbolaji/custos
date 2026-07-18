@@ -65,6 +65,10 @@ export function Message({ message, isStreaming, onApprove, onReject }: MessagePr
             components={{
               // Render links as plain text (no clickable links from untrusted content)
               a: ({ children }) => <span>{children}</span>,
+              // Wrap tables in a scrollable container
+              table: ({ children }) => (
+                <div className="table-wrap"><table>{children}</table></div>
+              ),
             }}
           >
             {message.content}
