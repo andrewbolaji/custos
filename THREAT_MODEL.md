@@ -122,7 +122,7 @@ Committed keys, poisoned deps.
 
 Two fields in the request body are client-controlled and therefore untrusted:
 
-1. **user_permissions** -- the client declares its own access tier. In production, this would come from an authenticated identity (JWT, IdP). A malicious client could claim `["hr", "finance"]` and retrieve restricted chunks. Documented since Phase 1.
+1. **user_permissions** -- the client declares its own access tier. In production, this would come from an authenticated identity (JWT, IdP). A malicious client could claim `["hr", "finance"]` and retrieve restricted chunks. Documented since Phase 1. The UI provides a demo role-switcher (Standard/HR/Finance) over this field. Switching access clears conversation history to prevent cross-level carryover through the history channel.
 
 2. **history** -- the client sends prior conversation turns for multi-turn context. A malicious client could forge assistant turns (e.g., claiming an action was already approved, or injecting fabricated answers containing restricted data). The following controls hold per turn regardless of history content:
    - **Tool gating (T6):** a forged history claiming prior approval does NOT bypass the hard gate. Every `send_email`/`file_ticket` tool_use produces a fresh PendingAction requiring real user confirmation. ENFORCED by test.

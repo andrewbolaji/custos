@@ -503,3 +503,66 @@ describe("useChat: confirmation flow", () => {
     expect(secondMsg.pendingConfirmation?.actionId).toBe("uuid-second");
   });
 });
+
+describe("useChat: access group switcher", () => {
+  beforeEach(() => {
+    lastCallbacks = null;
+    lastController = null;
+    confirmActionCalls = [];
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("defaults to general access group", () => {
+    const { result } = renderHook(() => useChat());
+    expect(result.current.accessGroup).toBe("general");
+  });
+
+  it("switching access clears all messages", async () => {
+    const { result } = renderHook(() => useChat());
+
+    // Send a message and let it complete
+    act(() => {
+      result.current.sendMessage("test question");
+    });
+    act(() => {
+      lastCallbacks!.onToken("Answer.");
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 500));
+    });
+    act(() => {
+      lastCallbacks!.onDone();
+    });
+
+    expect(result.current.state.messages.length).toBeGreaterThan(0);
+
+    // Switch access group
+    act(() => {
+      result.current.setAccessGroup("hr");
+    });
+
+    // Messages must be cleared
+    expect(result.current.state.messages).toHaveLength(0);
+    expect(result.current.state.status).toBe("idle");
+    expect(result.current.accessGroup).toBe("hr");
+  });
+
+  it("sends the new permissions after switching", () => {
+    const { result } = renderHook(() => useChat());
+
+    act(() => {
+      result.current.setAccessGroup("finance");
+    });
+
+    act(() => {
+      result.current.sendMessage("revenue report");
+    });
+
+    // The assistant message should have finance permissions
+    const assistantMsg = result.current.state.messages[1];
+    expect(assistantMsg.permissions).toEqual(["finance"]);
+  });
+});

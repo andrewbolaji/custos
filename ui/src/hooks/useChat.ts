@@ -34,9 +34,13 @@ function makeId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
+export type AccessGroup = "general" | "hr" | "finance";
+
 export interface UseChatReturn {
   state: ChatState;
   sessionId: string;
+  accessGroup: AccessGroup;
+  setAccessGroup: (group: AccessGroup) => void;
   sendMessage: (query: string, permissions?: string[]) => void;
   cancelStream: () => void;
   retry: () => void;
@@ -47,6 +51,7 @@ export interface UseChatReturn {
 
 export function useChat(): UseChatReturn {
   const [state, setState] = useState<ChatState>(INITIAL_STATE);
+  const [accessGroup, setAccessGroupState] = useState<AccessGroup>("general");
   const controllerRef = useRef<AbortController | null>(null);
   const lastQueryRef = useRef<{ query: string; permissions: string[] } | null>(
     null,
@@ -54,6 +59,8 @@ export function useChat(): UseChatReturn {
   const assistantIdRef = useRef<string>("");
   const messagesRef = useRef<Message[]>([]);
   messagesRef.current = state.messages;
+  const accessGroupRef = useRef<AccessGroup>(accessGroup);
+  accessGroupRef.current = accessGroup;
   // Stable session ID: generated once per hook mount (per browser session)
   const sessionId = useMemo(() => makeId(), []);
 
@@ -150,9 +157,10 @@ export function useChat(): UseChatReturn {
   }, []);
 
   const sendMessage = useCallback(
-    (query: string, permissions: string[] = ["general"]) => {
+    (query: string, permissions?: string[]) => {
+      const perms = permissions ?? [accessGroupRef.current];
       // Save for retry
-      lastQueryRef.current = { query, permissions };
+      lastQueryRef.current = { query, permissions: perms };
 
       const userMessage: Message = {
         id: makeId(),
@@ -177,7 +185,7 @@ export function useChat(): UseChatReturn {
         toolUses: [],
         pendingConfirmation: null,
         timestamp: Date.now(),
-        permissions,
+        permissions: perms,
       };
 
       setState((prev) => ({
@@ -208,7 +216,7 @@ export function useChat(): UseChatReturn {
       lastCommitRef.current = 0;
       startStreamSync();
 
-      const controller = streamChat(query, permissions, sessionId, {
+      const controller = streamChat(query, perms, sessionId, {
         onToken(text: string) {
           // Append to pending ref (fast, no React re-render).
           // The rAF drain loop reveals characters at a smooth pace.
@@ -394,6 +402,20 @@ export function useChat(): UseChatReturn {
     [sessionId],
   );
 
+  const setAccessGroup = useCallback((group: AccessGroup) => {
+    // Security: clear conversation on access change to prevent
+    // cross-level carryover through client-supplied history.
+    controllerRef.current?.abort();
+    controllerRef.current = null;
+    stopStreamSync();
+    pendingRef.current = "";
+    shownRef.current = 0;
+    lastQueryRef.current = null;
+    assistantIdRef.current = "";
+    setAccessGroupState(group);
+    setState(INITIAL_STATE);
+  }, [stopStreamSync]);
+
   const rejectAction = useCallback((actionId: string) => {
     confirmAction(actionId, sessionId, false)
       .then(() => {
@@ -427,6 +449,8 @@ export function useChat(): UseChatReturn {
   return {
     state,
     sessionId,
+    accessGroup,
+    setAccessGroup,
     sendMessage,
     cancelStream,
     retry,

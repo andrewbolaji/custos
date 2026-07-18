@@ -10,6 +10,8 @@ import { useChat } from "./hooks/useChat";
 export default function App() {
   const {
     state,
+    accessGroup,
+    setAccessGroup,
     sendMessage,
     cancelStream,
     retry,
@@ -23,7 +25,7 @@ export default function App() {
   return (
     <div className="app">
       <DemoBanner />
-      <Header />
+      <Header accessGroup={accessGroup} onAccessChange={setAccessGroup} />
       <div className="body-layout">
         <div className="thread">
           <main className="chat-container">
