@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { ChatStatus, Message as MessageType } from "../types";
 
@@ -14,49 +14,86 @@ interface MessageListProps {
 export function MessageList({ messages, status, onApprove, onReject }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
-  const userScrolledRef = useRef(false);
-  const prevMsgCountRef = useRef(messages.length);
+  const [following, setFollowing] = useState(true);
+  const lastScrollTopRef = useRef(0);
+  const programmaticScrollRef = useRef(false);
 
-  // Detect user scroll-up: if the user scrolls away from the bottom,
-  // stop auto-scrolling so controls aren't moving targets.
+  // Detect genuine user scroll-up by tracking scroll DIRECTION.
+  // programmatic scrollTop changes (from the follow effect) are
+  // flagged so they don't trigger user-scrolled detection.
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
-    userScrolledRef.current = !atBottom;
+
+    const current = el.scrollTop;
+    const prev = lastScrollTopRef.current;
+    lastScrollTopRef.current = current;
+
+    // Skip programmatic scroll events
+    if (programmaticScrollRef.current) {
+      programmaticScrollRef.current = false;
+      return;
+    }
+
+    // User scrolled UP: genuine upward direction
+    if (current < prev - 2) {
+      setFollowing(false);
+    }
+
+    // User returned near bottom: resume following
+    const atBottom = el.scrollHeight - current - el.clientHeight < 80;
+    if (atBottom && !following) {
+      setFollowing(true);
+    }
+  }, [following]);
+
+  // Wheel and touchmove are explicit user intent
+  const handleUserIntent = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    if (!atBottom) {
+      setFollowing(false);
+    }
   }, []);
 
-  // Re-enable auto-scroll when streaming stops
+  // Re-enable following when streaming stops
   useEffect(() => {
     if (status !== "streaming") {
-      userScrolledRef.current = false;
+      setFollowing(true);
     }
   }, [status]);
 
-  // Auto-scroll: during streaming, set scrollTop directly (no animation
-  // restart). For discrete jumps (new message added), use smooth scroll.
+  // Follow bottom during streaming
   useEffect(() => {
-    if (userScrolledRef.current) return;
+    if (!following) return;
     const el = scrollRef.current;
     if (!el) return;
 
-    const isNewMessage = messages.length !== prevMsgCountRef.current;
-    prevMsgCountRef.current = messages.length;
-
-    if (isNewMessage) {
-      // Discrete jump: smooth scroll to bottom
+    if (status === "streaming") {
+      programmaticScrollRef.current = true;
+      el.scrollTop = el.scrollHeight;
+    } else {
       endRef.current?.scrollIntoView({ behavior: "smooth" });
-    } else if (status === "streaming") {
-      // During streaming: follow bottom directly (no animation restart)
+    }
+  }, [messages, messages[messages.length - 1]?.content, status, following]);
+
+  const jumpToLatest = useCallback(() => {
+    setFollowing(true);
+    const el = scrollRef.current;
+    if (el) {
+      programmaticScrollRef.current = true;
       el.scrollTop = el.scrollHeight;
     }
-  }, [messages, messages[messages.length - 1]?.content, status]);
+  }, []);
 
   return (
     <div
       className="message-list-scroll"
       ref={scrollRef}
       onScroll={handleScroll}
+      onWheel={handleUserIntent}
+      onTouchMove={handleUserIntent}
     >
       <div className="message-list">
         {messages.map((msg) => (
@@ -74,6 +111,15 @@ export function MessageList({ messages, status, onApprove, onReject }: MessageLi
         ))}
         <div ref={endRef} />
       </div>
+      {!following && status === "streaming" && (
+        <button
+          className="jump-btn"
+          onClick={jumpToLatest}
+          aria-label="Jump to latest"
+        >
+          Jump to latest
+        </button>
+      )}
     </div>
   );
 }

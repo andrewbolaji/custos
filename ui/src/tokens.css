@@ -35,7 +35,7 @@
 
 :root {
   /* --- Surfaces (four-step ladder) --- */
-  --bg-body: #191710;     /* behind the app: same family as --ink */
+  --bg-body: #e2dcd0;     /* behind overscroll only; matches canvas */
   --bg: #e2dcd0;           /* chat canvas: mid-tone */
   --surface: #ffffff;      /* header + bubbles: white */
   --surface-2: #f7f5f0;   /* rail + secondary: near-white */
@@ -96,7 +96,7 @@
   --shadow-input: 0 2px 10px rgba(30, 25, 10, 0.04);
 
   /* --- Layout --- */
-  --app-max: 1160px;
+  --col-max: 760px;  /* centred message/composer column */
 
   /* --- Transitions --- */
   --tr-fast: 150ms ease;
