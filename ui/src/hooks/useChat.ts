@@ -58,15 +58,15 @@ export function useChat(): UseChatReturn {
   const sessionId = useMemo(() => makeId(), []);
 
   // Streaming buffer: tokens accumulate in pendingRef at SSE speed.
-  // A rAF loop drains them at a constant pace (~3 chars/frame, ~180
-  // chars/sec at 60fps) into shownRef, committing to React state at
-  // ~30fps. The rate is identical at start, middle, and end of every
-  // answer: no adaptive catch-up, no acceleration.
+  // A rAF loop drains them at a constant pace into shownRef, committing
+  // to React state at ~30fps. The rate is identical at start, middle,
+  // and end of every answer: no adaptive catch-up, no acceleration.
   const pendingRef = useRef("");     // full received text
   const shownRef = useRef(0);        // how many chars revealed so far
   const rafRef = useRef<number | null>(null);
   const lastCommitRef = useRef(0);   // last setState timestamp
-  const CHARS_PER_FRAME = 3;         // constant, ~180 chars/sec
+  // Perceptual tuning knob: lower = slower reveal. ~120 chars/sec at 60fps.
+  const CHARS_PER_FRAME = 2;
   const COMMIT_INTERVAL = 33;        // ~30fps
 
   const startStreamSync = useCallback(() => {
@@ -83,9 +83,10 @@ export function useChat(): UseChatReturn {
         const next = Math.min(shown + CHARS_PER_FRAME, pending.length);
         shownRef.current = next;
 
-        // Throttle React commits to ~30fps
+        // Throttle React commits to ~30fps, but always commit when
+        // the drain catches up (ensures final state is flushed).
         const now = performance.now();
-        if (now - lastCommitRef.current >= COMMIT_INTERVAL) {
+        if (now - lastCommitRef.current >= COMMIT_INTERVAL || next >= pending.length) {
           lastCommitRef.current = now;
           const content = pending.slice(0, next);
           const id = assistantIdRef.current;

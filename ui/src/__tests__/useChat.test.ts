@@ -229,7 +229,7 @@ describe("useChat: never-stuck invariant", () => {
 
     // Flush the rAF-based stream sync loop
     await act(async () => {
-      await new Promise((r) => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 500));
     });
 
     const assistantMsg = result.current.state.messages[1];

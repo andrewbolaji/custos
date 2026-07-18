@@ -35,7 +35,7 @@
 
 :root {
   /* --- Surfaces (four-step ladder) --- */
-  --bg-body: #161b26;     /* behind the app: deep charcoal with blue cast */
+  --bg-body: #191710;     /* behind the app: same family as --ink */
   --bg: #e2dcd0;           /* chat canvas: mid-tone */
   --surface: #ffffff;      /* header + bubbles: white */
   --surface-2: #f7f5f0;   /* rail + secondary: near-white */
