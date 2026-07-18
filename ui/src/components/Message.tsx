@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -66,6 +66,39 @@ function MemoMarkdown({ content, isStreaming }: { content: string; isStreaming: 
   );
 }
 
+// Threshold: apply the gradient mask only when content is taller than
+// ~2.5 line-heights. Below that the gradient ramp crosses the glyphs
+// themselves, which reads as blurry text.
+const MASK_MIN_HEIGHT = 56;
+
+/**
+ * Container for markdown content. Applies the streaming fade mask
+ * only when the content is tall enough for it to look right.
+ */
+function MdContainer({ content, isStreaming }: { content: string; isStreaming: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [tall, setTall] = useState(false);
+
+  useEffect(() => {
+    if (!isStreaming) {
+      setTall(false);
+      return;
+    }
+    const el = ref.current;
+    if (el) {
+      setTall(el.offsetHeight > MASK_MIN_HEIGHT);
+    }
+  }, [content, isStreaming]);
+
+  const cls = isStreaming && tall ? "md-content streaming" : "md-content";
+
+  return (
+    <div className={cls} ref={ref}>
+      <MemoMarkdown content={content} isStreaming={isStreaming} />
+    </div>
+  );
+}
+
 interface MessageProps {
   message: MessageType;
   isStreaming: boolean;
@@ -90,9 +123,7 @@ export function Message({ message, isStreaming, onApprove, onReject }: MessagePr
         <Logo size={18} variant="small" />
       </div>
       <div className="bubble-assistant">
-        <div className={`md-content${isStreaming ? " streaming" : ""}`}>
-          <MemoMarkdown content={message.content} isStreaming={isStreaming} />
-        </div>
+        <MdContainer content={message.content} isStreaming={isStreaming} />
         {message.refused && (
           <p className="message-refused">
             The assistant could not find relevant information in the available documents.
