@@ -16,12 +16,11 @@ STATE_FILE="${HOME}/.custos-alert-state"
 
 set -euo pipefail
 
-# Fetch admin status
-RESPONSE=$(curl -sf -H "Authorization: Bearer ${CUSTOS_ADMIN_TOKEN}" "${CUSTOS_ADMIN_URL}")
-if [ $? -ne 0 ]; then
-    echo "Failed to reach admin endpoint" >&2
+# Fetch admin status. Fail loudly if unreachable or auth fails.
+RESPONSE=$(curl -sf -H "Authorization: Bearer ${CUSTOS_ADMIN_TOKEN}" "${CUSTOS_ADMIN_URL}") || {
+    echo "ERROR: Failed to reach admin endpoint (${CUSTOS_ADMIN_URL}). Check token and connectivity." >&2
     exit 1
-fi
+}
 
 # Parse values
 PCT=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['pct_monthly_used'])")
