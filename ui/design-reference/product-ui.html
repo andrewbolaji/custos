@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Custos — Product UI (tightened to read as chat)</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&display=swap');
+  :root{
+    --bg:#f2efe8; --surface:#ffffff; --surface-2:#faf8f3;
+    --ink:#191710; --ink-2:#57524a; --muted:#8a8478; --faint:#b3ad9f;
+    --line:#e7e2d7; --line-2:#ddd7c9;
+    --cobalt:#2b57e0; --cobalt-d:#2247c4; --cobalt-soft:#eef1fd;
+    --amber:#d99413; --red:#df4a3d; --green:#11996b;
+    --grotesk:"Space Grotesk",-apple-system,system-ui,sans-serif;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.55;-webkit-font-smoothing:antialiased}
+  .app{max-width:1160px;margin:0 auto;min-height:100vh;display:flex;flex-direction:column;background:var(--bg)}
+  .banner{font-size:12px;color:var(--ink-2);background:var(--surface-2);border-bottom:1px solid var(--line);padding:8px 24px;text-align:center}
+  .banner b{color:var(--amber);font-weight:600}
+  .top{display:flex;align-items:center;justify-content:space-between;padding:14px 24px;background:var(--surface);border-bottom:1px solid var(--line)}
+  .brand{display:flex;align-items:center;gap:11px}
+  .logo{width:30px;height:30px;border-radius:8px;background:var(--cobalt);display:grid;place-items:center;box-shadow:0 2px 0 var(--cobalt-d)}
+  .logo svg{width:16px;height:16px}
+  .brand .name{font-family:var(--grotesk);font-weight:700;font-size:18px;letter-spacing:-.01em}
+  .brand .tag{font-size:11px;color:var(--muted);letter-spacing:.03em}
+  .who{display:flex;align-items:center;gap:9px}
+  .pill{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;color:var(--ink-2);background:var(--surface-2);border:1px solid var(--line-2);border-radius:20px;padding:5px 11px}
+  .pill .dot{width:6px;height:6px;border-radius:50%;background:var(--green)}
+  .pill.scoped{color:var(--green);border-color:rgba(17,153,107,.3);background:rgba(17,153,107,.06)}
+  .body{display:grid;grid-template-columns:1fr 290px;flex:1;min-height:0}
+  .thread{display:flex;flex-direction:column;border-right:1px solid var(--line)}
+  .scroll{flex:1;overflow:auto;padding:26px 30px 10px;display:flex;flex-direction:column;gap:18px}
+  /* user bubble */
+  .row-u{display:flex;justify-content:flex-end}
+  .bubble{background:var(--cobalt);color:#fff;padding:10px 15px;border-radius:18px 18px 6px 18px;font-size:14.5px;max-width:74%;box-shadow:0 2px 8px rgba(43,87,224,.22)}
+  /* assistant bubble — now a contained message, mirrors the user side */
+  .row-a{display:flex;gap:11px;align-items:flex-start}
+  .ava{width:28px;height:28px;border-radius:9px;background:var(--ink);flex:none;display:grid;place-items:center;margin-top:2px}
+  .ava svg{width:15px;height:15px}
+  .msg{background:var(--surface);border:1px solid var(--line);border-radius:6px 18px 18px 18px;padding:14px 17px;max-width:80%;box-shadow:0 3px 12px rgba(30,25,10,.05)}
+  .lead{font-family:var(--grotesk);font-size:15px;font-weight:600;line-height:1.45;margin:0 0 9px;color:var(--ink)}
+  .lead .hl{background:linear-gradient(transparent 60%, #ffe089 60%);padding:0 3px}
+  .msg p{margin:0 0 10px;font-size:14.5px} .msg p:last-child{margin:0} .msg strong{font-weight:650}
+  .msg ul{list-style:none;margin:2px 0 10px;padding:0;display:flex;flex-direction:column;gap:7px}
+  .msg li{position:relative;padding-left:19px;font-size:14px;line-height:1.5}
+  .msg li::before{content:"";position:absolute;left:2px;top:8px;width:6px;height:6px;border-radius:50%;background:var(--cobalt)}
+  .cite{color:var(--cobalt);font-weight:600;font-size:11px;vertical-align:super;text-decoration:none;margin-left:1px}
+  .src-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .src{display:flex;align-items:center;gap:9px;background:var(--surface-2);border:1px solid var(--line-2);border-radius:9px;padding:6px 10px}
+  .src .n{font-family:var(--grotesk);font-size:11px;font-weight:700;color:var(--cobalt)}
+  .src .d{font-weight:600;font-size:12px} .src .p{font-size:11px;color:var(--muted)}
+  .scoped-tag{margin-left:auto;display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:var(--green)}
+  .guard{display:flex;align-items:center;gap:9px;margin-top:11px;background:var(--surface-2);border:1px solid rgba(223,74,61,.3);border-left:3px solid var(--red);border-radius:8px;padding:8px 12px;font-size:12.5px;color:var(--ink-2)}
+  .guard b{color:var(--red);font-family:var(--grotesk);font-weight:600;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase}
+  /* confirmation lives inside an assistant message */
+  .conf{margin-top:11px;border:1px solid var(--line-2);border-radius:11px;overflow:hidden;background:var(--surface-2)}
+  .conf .h{display:flex;justify-content:space-between;align-items:center;padding:9px 14px;border-bottom:1px solid var(--line);font-family:var(--grotesk);font-size:10.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--amber)}
+  .conf .h .s{color:var(--muted);font-weight:500;letter-spacing:0;text-transform:none}
+  .conf .c{padding:12px 14px}
+  .conf .kv{display:flex;font-size:13px;margin-bottom:5px}.conf .kv .k{width:58px;color:var(--muted);flex:none}
+  .conf .btns{display:flex;gap:9px;padding:0 14px 13px}
+  .cb{font-family:var(--sans);font-size:13px;font-weight:600;padding:7px 17px;border-radius:8px;border:1px solid;cursor:pointer}
+  .cb.ok{background:var(--green);border-color:var(--green);color:#fff}
+  .cb.no{background:var(--surface);border-color:var(--line-2);color:var(--ink-2)}
+  .composer-wrap{padding:15px 30px 22px;border-top:1px solid var(--line);background:var(--bg)}
+  .composer{display:flex;align-items:center;gap:10px;background:var(--surface);border:1.5px solid var(--line-2);border-radius:14px;padding:6px 6px 6px 16px;box-shadow:0 2px 10px rgba(30,25,10,.04)}
+  .composer:focus-within{border-color:var(--cobalt)}
+  .composer input{flex:1;border:none;outline:none;font-size:14.5px;color:var(--ink);background:transparent;font-family:var(--sans)}
+  .composer input::placeholder{color:var(--faint)}
+  .send{background:var(--cobalt);color:#fff;border:none;border-radius:10px;height:38px;padding:0 18px;font-weight:600;font-size:14px;font-family:var(--grotesk);display:flex;align-items:center;gap:7px;cursor:pointer}
+  .rail{background:var(--surface-2);padding:24px 20px;overflow:auto}
+  .rail-h{font-family:var(--grotesk);font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:3px}
+  .rail-sub{font-size:11.5px;color:var(--faint);margin-bottom:20px}
+  .step{display:flex;gap:11px;margin-bottom:16px}
+  .step .ic{width:22px;height:22px;border-radius:7px;flex:none;display:grid;place-items:center;margin-top:1px}
+  .step.ok .ic{background:rgba(17,153,107,.12)} .step.guard .ic{background:rgba(223,74,61,.12)}
+  .step.wait .ic{background:var(--cobalt-soft)}
+  .step .t{font-size:13px;font-weight:600;line-height:1.3}
+  .step .m{font-size:12px;color:var(--muted);margin-top:1px}
+  .step.wait .t{color:var(--cobalt)}
+  .rail-foot{margin-top:8px;padding-top:16px;border-top:1px solid var(--line);font-size:11px;color:var(--faint);line-height:1.7}
+  .rail-foot b{color:var(--ink-2);font-family:var(--grotesk);font-weight:600}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="banner">Demo mode: permissions are simulated. In production, access control is enforced via <b>authenticated identity</b>.</div>
+  <div class="top">
+    <div class="brand">
+      <div class="logo"><svg viewBox="0 0 24 24" fill="none"><path d="M12 2l8 3v6c0 5-3.5 8.5-8 11-4.5-2.5-8-6-8-11V5l8-3z" stroke="#fff" stroke-width="2.2" stroke-linejoin="round"/></svg></div>
+      <div><div class="name">Custos</div><div class="tag">Private AI over your documents</div></div>
+    </div>
+    <div class="who">
+      <span class="pill"><span class="dot"></span>general access</span>
+      <span class="pill scoped"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M12 2l8 3v6c0 5-3.5 8.5-8 11-4.5-2.5-8-6-8-11V5l8-3z" stroke="#11996b" stroke-width="2.4" stroke-linejoin="round"/></svg>scoped to your access</span>
+    </div>
+  </div>
+
+  <div class="body">
+    <div class="thread">
+      <div class="scroll">
+        <div class="row-u"><div class="bubble">What's the PTO accrual rate for new employees?</div></div>
+
+        <div class="row-a">
+          <div class="ava"><svg viewBox="0 0 24 24" fill="none"><path d="M12 2l8 3v6c0 5-3.5 8.5-8 11-4.5-2.5-8-6-8-11V5l8-3z" stroke="#fff" stroke-width="2.2" stroke-linejoin="round"/></svg></div>
+          <div class="msg">
+            <p class="lead">New hires accrue <span class="hl">10 days per year</span>, added monthly.</p>
+            <p>That rate applies to employees with <strong>0–2 years of service</strong>. A few related rules:</p>
+            <ul>
+              <li>Planned absences need a request at least <strong>two weeks ahead</strong>.<a class="cite" href="#">1</a></li>
+              <li>Sick or emergency leave needs no notice — just tell your supervisor by the start of your shift.</li>
+              <li>Up to <strong>5 unused days</strong> carry into the next year; the rest are forfeited on January 1.<a class="cite" href="#">2</a></li>
+            </ul>
+            <div class="src-row">
+              <div class="src"><span class="n">1</span><div><div class="d">Employee Handbook</div><div class="p">PTO Policy › Accrual</div></div></div>
+              <div class="src"><span class="n">2</span><div><div class="d">Employee Handbook</div><div class="p">PTO Policy › Carryover</div></div></div>
+              <span class="scoped-tag"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M12 2l8 3v6c0 5-3.5 8.5-8 11-4.5-2.5-8-6-8-11V5l8-3z" stroke="#11996b" stroke-width="2.4" stroke-linejoin="round"/></svg>scoped</span>
+            </div>
+            <div class="guard"><b>Blocked</b> A retrieved document tried to inject a hidden instruction. Ignored.</div>
+          </div>
+        </div>
+
+        <div class="row-u"><div class="bubble">Email a summary to my manager.</div></div>
+
+        <div class="row-a">
+          <div class="ava"><svg viewBox="0 0 24 24" fill="none"><path d="M12 2l8 3v6c0 5-3.5 8.5-8 11-4.5-2.5-8-6-8-11V5l8-3z" stroke="#fff" stroke-width="2.2" stroke-linejoin="round"/></svg></div>
+          <div class="msg">
+            <p>I've drafted the email for your review — approve or reject below.</p>
+            <div class="conf">
+              <div class="h"><span>Send email — requires approval</span><span class="s">(simulated)</span></div>
+              <div class="c">
+                <div class="kv"><span class="k">To</span><span>manager@meridian-example.com</span></div>
+                <div class="kv"><span class="k">Subject</span><span>PTO accrual — quick summary</span></div>
+                <div class="kv"><span class="k">Body</span><span>New hires accrue 10 days/year, monthly. Up to 5 carry over.</span></div>
+              </div>
+              <div class="btns"><button class="cb ok">Approve</button><button class="cb no">Reject</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="composer-wrap">
+        <div class="composer">
+          <input placeholder="Ask about the documents…">
+          <button class="send">Send
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M4 12h16M14 6l6 6-6 6" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <aside class="rail">
+      <div class="rail-h">Provenance</div>
+      <div class="rail-sub">How this answer was built.</div>
+      <div class="step ok">
+        <div class="ic"><svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#11996b" stroke-width="2.6"/></svg></div>
+        <div><div class="t">2 sources retrieved</div><div class="m">Employee Handbook · 40ms</div></div>
+      </div>
+      <div class="step ok">
+        <div class="ic"><svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#11996b" stroke-width="2.6"/></svg></div>
+        <div><div class="t">Grounded</div><div class="m">Answer built from retrieved text only</div></div>
+      </div>
+      <div class="step guard">
+        <div class="ic"><svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M12 2l8 3v6c0 5-3.5 8.5-8 11-4.5-2.5-8-6-8-11V5l8-3z" stroke="#df4a3d" stroke-width="2.2"/></svg></div>
+        <div><div class="t">Injected instruction ignored</div><div class="m">A document tried to change the task</div></div>
+      </div>
+      <div class="step ok">
+        <div class="ic"><svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M12 2l8 3v6c0 5-3.5 8.5-8 11-4.5-2.5-8-6-8-11V5l8-3z" stroke="#11996b" stroke-width="2.2"/></svg></div>
+        <div><div class="t">Scoped to your access</div><div class="m">Only documents you may see</div></div>
+      </div>
+      <div class="step wait">
+        <div class="ic"><svg width="13" height="13" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#2b57e0" stroke-width="2"/><path d="M12 8v4l3 2" stroke="#2b57e0" stroke-width="2" stroke-linecap="round"/></svg></div>
+        <div><div class="t">Action held</div><div class="m">send_email awaits your approval</div></div>
+      </div>
+      <div class="rail-foot"><b>unauthorized_action_rate = 0</b><br><b>pii_leak_rate = 0</b><br>Every answer cites its source.</div>
+    </aside>
+  </div>
+</div>
+</body>
+</html>

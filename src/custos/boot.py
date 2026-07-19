@@ -12,6 +12,7 @@ the index is rebuilt on next restart.
 from __future__ import annotations
 
 import logging
+import time
 
 from custos.chunker import chunk_document
 from custos.embedder import LocalEmbedder
@@ -19,6 +20,34 @@ from custos.ingest import CORPUS_DIR, ingest_corpus, load_manifest
 from custos.vector_store import QdrantVectorStore
 
 logger = logging.getLogger(__name__)
+
+# Default: poll every 2s for up to 60s
+QDRANT_POLL_INTERVAL = 2.0
+QDRANT_POLL_TIMEOUT = 60.0
+
+
+def wait_for_qdrant(store: QdrantVectorStore, timeout: float = QDRANT_POLL_TIMEOUT, interval: float = QDRANT_POLL_INTERVAL) -> bool:
+    """Poll Qdrant until it responds or timeout elapses.
+
+    Returns True if reachable, False if timeout exceeded.
+    """
+    deadline = time.monotonic() + timeout
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            store.count()
+            logger.info("Qdrant reachable after %d attempt(s)", attempt)
+            return True
+        except Exception as exc:
+            logger.debug("Qdrant poll attempt %d failed: %s", attempt, exc)
+            if time.monotonic() + interval > deadline:
+                logger.error(
+                    "Qdrant not reachable after %.0fs (%d attempts)",
+                    timeout, attempt,
+                )
+                return False
+            time.sleep(interval)
 
 
 def compute_expected_chunks() -> int:

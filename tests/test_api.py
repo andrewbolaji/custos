@@ -29,14 +29,20 @@ class TestHealthEndpoint:
             api_module._index_ready = original
 
     def test_health_returns_degraded_when_index_not_ready(self) -> None:
+        import time
+
         original = api_module._index_ready
+        original_recheck = api_module._last_recheck
         try:
             api_module._index_ready = False
+            # Suppress self-heal re-check by pretending one just happened
+            api_module._last_recheck = time.monotonic()
             response = client.get("/api/health")
             assert response.status_code == 200
             assert response.json() == {"status": "degraded"}
         finally:
             api_module._index_ready = original
+            api_module._last_recheck = original_recheck
 
 
 class TestReadinessGate:

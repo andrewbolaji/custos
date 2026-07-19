@@ -29,6 +29,7 @@ import json
 import logging
 import os
 import secrets
+import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import asdict
@@ -41,7 +42,7 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from custos.agent_loop import AgentLoop, AgentResult
-from custos.boot import ensure_index_ready
+from custos.boot import ensure_index_ready, wait_for_qdrant
 from custos.embedder import LocalEmbedder
 from custos.ingest import ingest_corpus
 from custos.injection_detector import InjectionDetector
@@ -132,15 +133,19 @@ async def _lifespan(app_instance: FastAPI) -> AsyncGenerator[None, None]:
     global _index_ready, _index_chunks, _index_expected  # noqa: PLW0603
     _install_pii_formatter()
 
-    # Verify/rebuild the index before reporting healthy
+    # Wait for Qdrant to become reachable, then verify/rebuild the index
     try:
         embedder = _get_embedder()
         store = _get_store()
-        _index_chunks, _index_expected = ensure_index_ready(embedder, store)
-        _index_ready = _index_chunks == _index_expected and _index_chunks > 0
-        logger.info("Boot: index %s, %d/%d chunks",
-                     "ready" if _index_ready else "INCOMPLETE",
-                     _index_chunks, _index_expected)
+        if not wait_for_qdrant(store):
+            logger.error("Boot: Qdrant unreachable, starting degraded")
+            _index_ready = False
+        else:
+            _index_chunks, _index_expected = ensure_index_ready(embedder, store)
+            _index_ready = _index_chunks == _index_expected and _index_chunks > 0
+            logger.info("Boot: index %s, %d/%d chunks",
+                         "ready" if _index_ready else "INCOMPLETE",
+                         _index_chunks, _index_expected)
     except Exception:
         logger.exception("Boot: index check failed")
         _index_ready = False
@@ -186,6 +191,8 @@ _rate_limiter = RateLimiter()
 _index_ready = False
 _index_chunks = 0
 _index_expected = 0
+_last_recheck: float = 0.0
+HEALTH_RECHECK_INTERVAL = 30.0  # seconds between re-verification attempts
 
 # Admin token: must be set in the environment. Never in the repo.
 _ADMIN_TOKEN = os.environ.get("CUSTOS_ADMIN_TOKEN", "")
@@ -446,7 +453,28 @@ class IngestResponse(BaseModel):
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    """Public health check. Returns status only, no internal details."""
+    """Public health check. Returns status only, no internal details.
+
+    Self-healing: if currently degraded, attempts a re-verification
+    at most once every HEALTH_RECHECK_INTERVAL seconds. If Qdrant is
+    back and the index is valid, flips back to ok.
+    """
+    global _index_ready, _index_chunks, _index_expected, _last_recheck  # noqa: PLW0603
+
+    if not _index_ready:
+        now = time.monotonic()
+        if now - _last_recheck >= HEALTH_RECHECK_INTERVAL:
+            _last_recheck = now
+            try:
+                store = _get_store()
+                embedder = _get_embedder()
+                _index_chunks, _index_expected = ensure_index_ready(embedder, store)
+                if _index_chunks == _index_expected and _index_chunks > 0:
+                    _index_ready = True
+                    logger.info("Self-heal: index recovered, %d/%d chunks", _index_chunks, _index_expected)
+            except Exception:
+                logger.debug("Self-heal: Qdrant still unreachable")
+
     return {"status": "ok" if _index_ready else "degraded"}
 
 
