@@ -7,7 +7,7 @@ request/response shapes, not the full pipeline).
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -91,6 +91,8 @@ class TestRetrievalConnectionError:
         try:
             api_module._index_ready = True
             with patch.object(
+                api_module, "_get_llm", return_value=MagicMock(),
+            ), patch.object(
                 api_module, "_retrieve_permitted_chunks",
                 side_effect=ConnectionError("Qdrant refused connection"),
             ):
@@ -118,6 +120,8 @@ class TestStreamRetrievalFailure:
         try:
             api_module._index_ready = True
             with patch.object(
+                api_module, "_get_llm", return_value=MagicMock(),
+            ), patch.object(
                 api_module, "_retrieve_permitted_chunks",
                 side_effect=ConnectionError("Qdrant refused connection"),
             ):

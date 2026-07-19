@@ -48,23 +48,20 @@ Every arrow crossing a trust boundary is a place where a security control lives.
 
 # Clone and install
 git clone <repo-url> && cd custos
-cp .env.example .env          # then fill in ANTHROPIC_API_KEY
 pip install -e ".[dev]"
 
-# Generate the demo corpus (deterministic, no API keys needed)
-make corpus
-
-# Start Qdrant
-make up
-
-# Run tests
+# Run tests and LLM-free evals (no API key needed)
 make test
-
-# Run the eval harness
 make evals
 
 # Lint and type check
 make check
+
+# --- To run the full live system ---
+cp .env.example .env          # then fill in ANTHROPIC_API_KEY
+make up                       # start Qdrant
+make index                    # ingest the demo corpus
+make serve                    # start the API
 ```
 
 ## Secret scanning
