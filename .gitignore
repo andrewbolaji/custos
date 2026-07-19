@@ -30,9 +30,6 @@ build/
 .venv/
 venv/
 
-# Generated corpus output
-corpus/output/
-
 # IDE
 .idea/
 .vscode/
