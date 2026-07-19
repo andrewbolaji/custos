@@ -3,10 +3,14 @@
 # frame-ancestors: deliberately restrictive. The demo can be embedded
 # only by the marketing site and nowhere else. Without this, any site
 # can iframe the demo and burn Andrew's API budget under their branding.
-# Replace EMBED_DOMAIN_PLACEHOLDER with the actual marketing domain(s).
+#
+# NOTE: 'self' alone is NOT sufficient here. 'self' resolves to whichever
+# origin served the document (custos.andrewbolaji.com or demo.aintellectsolutions.com),
+# so it does not authorize the AIntellect marketing page to frame it.
+# The marketing origins must be listed explicitly.
 
 /*
-  Content-Security-Policy: frame-ancestors 'self' EMBED_DOMAIN_PLACEHOLDER
+  Content-Security-Policy: frame-ancestors 'self' https://aintellectsolutions.com https://www.aintellectsolutions.com
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: camera=(), microphone=(), geolocation=()

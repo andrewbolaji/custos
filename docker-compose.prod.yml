@@ -28,6 +28,7 @@ services:
       QDRANT_URL: http://qdrant:6333
       QDRANT_COLLECTION: custos
       CUSTOS_TRUST_PROXY: "1"  # Behind Caddy; trust X-Forwarded-For
+      CUSTOS_CORS_ORIGINS: "https://custos.andrewbolaji.com,https://demo.aintellectsolutions.com"
     env_file:
       - ${HOME}/.env
     ports:
