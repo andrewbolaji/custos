@@ -3,9 +3,19 @@
 .env.local
 .env.*.local
 
-# Personal planning/strategy docs (not part of the project)
+# Personal methodology and cross-project notes.
+# These are Andrew's working process, not the product.
+# They must never enter this repository.
 Plan_Reckon_Capture_and_Next_Flagship.md
 PROJECT_BRIEF.md
+AI_BUILD_FRAMEWORK.md
+TEMPLATES_AND_PROTOCOLS.md
+NEW_PROJECT_SETUP.md
+BEAUTIFICATION_BRIEF.md
+AppMarketingPlaybook.md
+VOUCH_LESSONS.md
+LESSONS_*.md
+CLAUDE.md
 
 # Python
 __pycache__/
