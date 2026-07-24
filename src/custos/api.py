@@ -471,7 +471,11 @@ def health() -> dict[str, str]:
                 _index_chunks, _index_expected = ensure_index_ready(embedder, store)
                 if _index_chunks == _index_expected and _index_chunks > 0:
                     _index_ready = True
-                    logger.info("Self-heal: index recovered, %d/%d chunks", _index_chunks, _index_expected)
+                    logger.info(
+                        "Self-heal: index recovered, %d/%d chunks",
+                        _index_chunks,
+                        _index_expected,
+                    )
             except Exception:
                 logger.debug("Self-heal: Qdrant still unreachable")
 

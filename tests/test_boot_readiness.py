@@ -12,7 +12,6 @@ from __future__ import annotations
 import time
 from unittest.mock import MagicMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 import custos.api as api_module

@@ -26,7 +26,11 @@ QDRANT_POLL_INTERVAL = 2.0
 QDRANT_POLL_TIMEOUT = 60.0
 
 
-def wait_for_qdrant(store: QdrantVectorStore, timeout: float = QDRANT_POLL_TIMEOUT, interval: float = QDRANT_POLL_INTERVAL) -> bool:
+def wait_for_qdrant(
+    store: QdrantVectorStore,
+    timeout: float = QDRANT_POLL_TIMEOUT,
+    interval: float = QDRANT_POLL_INTERVAL,
+) -> bool:
     """Poll Qdrant until it responds or timeout elapses.
 
     Returns True if reachable, False if timeout exceeded.
