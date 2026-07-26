@@ -4,6 +4,10 @@
 # The LLM-dependent evals require ANTHROPIC_API_KEY and cost ~$0.50
 # per run. They are run manually before releases, not on every push.
 # This is a stated budget choice, not an oversight.
+#
+# The backend job matrixes over CUSTOS_VECTOR_BACKEND (qdrant, pgvector):
+# the same 61-case eval suite and the same pytest suite run against both,
+# per ADR-001 / docs/decisions/001-vector-store.md.
 
 name: CI
 
@@ -14,14 +18,8 @@ on:
     branches: [main]
 
 jobs:
-  backend:
+  lint:
     runs-on: ubuntu-latest
-    services:
-      qdrant:
-        image: qdrant/qdrant:v1.18.0
-        ports:
-          - 6333:6333
-
     steps:
       - uses: actions/checkout@v7
 
@@ -35,20 +33,64 @@ jobs:
       - name: Lint (ruff)
         run: ruff check .
 
-      - name: Index corpus
-        run: python -m custos.ingest
+      - name: Type check (mypy --strict)
+        run: mypy src/ corpus/ evals/ scripts/
+
+  backend:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        vector_backend: [qdrant, pgvector]
+    services:
+      qdrant:
+        image: qdrant/qdrant:v1.18.0
+        ports:
+          - 6333:6333
+      postgres:
+        image: pgvector/pgvector:pg17
+        ports:
+          - 5432:5432
         env:
-          QDRANT_URL: http://localhost:6333
+          POSTGRES_PASSWORD: localdev
+          POSTGRES_DB: custos
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      CUSTOS_VECTOR_BACKEND: ${{ matrix.vector_backend }}
+      QDRANT_URL: http://localhost:6333
+      CUSTOS_PGVECTOR_DSN: postgresql://postgres:localdev@localhost:5432/custos
+      # Same DSN, used by tests/test_vector_store_pgvector.py directly.
+      # The postgres service runs on every matrix leg (harmless when the
+      # leg under test is qdrant) so those tests exercise the pgvector ACL
+      # path on both legs, not just the pgvector leg.
+      CUSTOS_PGVECTOR_TEST_DSN: postgresql://postgres:localdev@localhost:5432/custos
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Apply pgvector migration
+        run: python scripts/migrate_pgvector.py
+
+      - name: Index corpus (${{ matrix.vector_backend }})
+        run: python -m custos.ingest
 
       - name: Run tests
         run: pytest tests/ -q
-        env:
-          QDRANT_URL: http://localhost:6333
 
-      - name: Run evals (deterministic, no LLM)
+      - name: Run evals (deterministic, no LLM) against ${{ matrix.vector_backend }}
         run: python -m evals.harness
-        env:
-          QDRANT_URL: http://localhost:6333
 
   frontend:
     runs-on: ubuntu-latest

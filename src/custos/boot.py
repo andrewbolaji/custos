@@ -17,7 +17,7 @@ import time
 from custos.chunker import chunk_document
 from custos.embedder import LocalEmbedder
 from custos.ingest import CORPUS_DIR, ingest_corpus, load_manifest
-from custos.vector_store import QdrantVectorStore
+from custos.vector_store_config import AdminVectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ QDRANT_POLL_TIMEOUT = 60.0
 
 
 def wait_for_qdrant(
-    store: QdrantVectorStore,
+    store: AdminVectorStore,
     timeout: float = QDRANT_POLL_TIMEOUT,
     interval: float = QDRANT_POLL_INTERVAL,
 ) -> bool:
@@ -75,7 +75,7 @@ def compute_expected_chunks() -> int:
 
 def ensure_index_ready(
     embedder: LocalEmbedder,
-    store: QdrantVectorStore,
+    store: AdminVectorStore,
 ) -> tuple[int, int]:
     """Verify the index is complete; reindex if not.
 

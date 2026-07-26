@@ -24,7 +24,7 @@ import yaml
 from custos.chunker import chunk_document
 from custos.embedder import LocalEmbedder
 from custos.interfaces import Chunk, Embedder
-from custos.vector_store import QdrantVectorStore
+from custos.vector_store_config import AdminVectorStore, get_vector_store
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,13 @@ CORPUS_DIR = Path(_corpus_env) if _corpus_env else (
     Path(__file__).parent.parent.parent / "corpus" / "output"
 )
 BATCH_SIZE = 32
+
+# Matches LocalEmbedder (BAAI/bge-small-en-v1.5). Not derived from the
+# `embedder` param below: Embedder is the abstract interface and doesn't
+# guarantee a `.dimension` attribute, so a default store construction here
+# has always assumed the default embedder's width (same assumption the
+# pre-pgvector code made implicitly via QdrantVectorStore's own default).
+_DEFAULT_VECTOR_SIZE = 384
 
 
 def load_manifest(corpus_dir: Path = CORPUS_DIR) -> list[dict[str, object]]:
@@ -46,7 +53,7 @@ def load_manifest(corpus_dir: Path = CORPUS_DIR) -> list[dict[str, object]]:
 def ingest_corpus(
     corpus_dir: Path = CORPUS_DIR,
     embedder: Embedder | None = None,
-    store: QdrantVectorStore | None = None,
+    store: AdminVectorStore | None = None,
 ) -> list[Chunk]:
     """Ingest the corpus: chunk, embed, and upsert to the vector store.
 
@@ -55,7 +62,7 @@ def ingest_corpus(
     if embedder is None:
         embedder = LocalEmbedder()
     if store is None:
-        store = QdrantVectorStore()
+        store = get_vector_store(vector_size=_DEFAULT_VECTOR_SIZE)
 
     docs = load_manifest(corpus_dir)
     logger.info("Ingesting %d documents from %s", len(docs), corpus_dir)

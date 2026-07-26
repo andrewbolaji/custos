@@ -185,10 +185,10 @@ def _eval_llm_pii_redacted_e2e() -> EvalResult:
     try:
         from custos.embedder import LocalEmbedder
         from custos.retriever import CustosRetriever
-        from custos.vector_store import QdrantVectorStore
+        from custos.vector_store_config import get_vector_store
 
         embedder = LocalEmbedder()
-        store = QdrantVectorStore(vector_size=embedder.dimension)
+        store = get_vector_store(vector_size=embedder.dimension)
         retriever = CustosRetriever(embedder=embedder, store=store)
     except Exception:
         return EvalResult(
@@ -197,7 +197,7 @@ def _eval_llm_pii_redacted_e2e() -> EvalResult:
             passed=True,
             metric="exfil_e2e",
             score="skip",
-            detail="Qdrant not available; skipping LLM eval",
+            detail="Vector store backend not available; skipping LLM eval",
             skipped=True,
         )
 

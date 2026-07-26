@@ -34,7 +34,7 @@ Every arrow crossing a trust boundary is a place where a security control lives.
 
 - **Backend:** Python 3.12, FastAPI
 - **Embeddings:** BGE-small (local, pluggable)
-- **Vector store:** Qdrant (self-hosted, pluggable; pgvector alternate)
+- **Vector store:** Qdrant (default, self-hosted) or pgvector (alternate, `CUSTOS_VECTOR_BACKEND=pgvector`), behind one `VectorStore` interface. See `docs/benchmarks/vector-backends.md` for measured latency/recall.
 - **LLM:** Claude (pluggable; GPT and local-model options)
 - **Chunking:** Structural with char-offset citation spans
 - **Frontend:** React/Vite chat UI
@@ -117,6 +117,8 @@ All limits are configurable via environment variables, adjustable without a rebu
 | `CUSTOS_TRUST_PROXY` | off | Trust X-Forwarded-For (set to 1 behind Caddy in production) |
 | `CUSTOS_MODEL` | claude-sonnet-4-6 | Anthropic model ID |
 | `ANTHROPIC_API_KEY` | (required) | Anthropic API key. Read from environment only, never in the repo. |
+| `CUSTOS_VECTOR_BACKEND` | qdrant | Vector store backend: `qdrant` or `pgvector`. See ADR-001 (`docs/decisions/001-vector-store.md`). |
+| `CUSTOS_PGVECTOR_DSN` | (required when backend is pgvector) | Postgres connection string, e.g. `postgresql://user:password@host:5432/custos`. Apply schema first with `make migrate-pgvector`. |
 
 ## Demo corpus
 
@@ -138,6 +140,7 @@ All PII is synthetic and uses reserved/invalid ranges. See `corpus/output/manife
 | `CORPUS.md` | The demo corpus plan and reproducibility rules |
 | `docs/decisions/` | Architectural decision records (vector store, embeddings, LLM, chunking) |
 | `docs/DECISIONS.md` | Running log of decisions and standing rules |
+| `docs/benchmarks/vector-backends.md` | Measured latency/recall for Qdrant vs. pgvector |
 
 ## Phases
 
