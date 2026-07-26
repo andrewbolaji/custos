@@ -5,9 +5,29 @@
 # per run. They are run manually before releases, not on every push.
 # This is a stated budget choice, not an oversight.
 #
-# The backend job matrixes over CUSTOS_VECTOR_BACKEND (qdrant, pgvector):
-# the same 61-case eval suite and the same pytest suite run against both,
-# per ADR-001 / docs/decisions/001-vector-store.md.
+# The backend job matrixes over two largely-orthogonal axes:
+#   - CUSTOS_VECTOR_BACKEND (qdrant, pgvector) -- ADR-001
+#   - CUSTOS_AGENT_RUNTIME (native, langgraph) -- ADR (docs/decisions/006-agent-runtime.md)
+#
+# This is an explicit `matrix.include` of 3 legs, not a full 2x2 (4-leg)
+# cross product: {qdrant, native}, {pgvector, native}, {qdrant, langgraph}.
+# Reasoning: agent_runtime only changes tool-call orchestration/gating; it
+# does not touch the retrieval/access-control path (both runtimes call the
+# same CustosRetriever for corpus-touching tools). vector_backend only
+# changes which store answers that retrieval call. The interaction surface
+# between the two axes is thin, so a full 2x2 would spend real CI minutes
+# re-proving the retrieval-layer behavior twice for no new coverage. 3 legs
+# prove every individual axis value at least once: native (the default,
+# where a regression is costliest) on both backends, and langgraph on the
+# primary backend (Qdrant, per ADR-001). The one combination this leaves
+# untested is {pgvector, langgraph} -- stated here explicitly, not silently
+# accepted; nothing about pgvector access control depends on which agent
+# runtime is selected, but if that assumption ever stops holding, this is
+# the gap that would hide a regression.
+#
+# The same 61-case eval suite and the same pytest suite run on every leg.
+# An eval that passes on one leg and fails on another is a finding to
+# report (see the ADR), never a test to loosen.
 
 name: CI
 
@@ -41,7 +61,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        vector_backend: [qdrant, pgvector]
+        include:
+          - vector_backend: qdrant
+            agent_runtime: native
+          - vector_backend: pgvector
+            agent_runtime: native
+          - vector_backend: qdrant
+            agent_runtime: langgraph
     services:
       qdrant:
         image: qdrant/qdrant:v1.18.0
@@ -62,6 +88,7 @@ jobs:
 
     env:
       CUSTOS_VECTOR_BACKEND: ${{ matrix.vector_backend }}
+      CUSTOS_AGENT_RUNTIME: ${{ matrix.agent_runtime }}
       QDRANT_URL: http://localhost:6333
       CUSTOS_PGVECTOR_DSN: postgresql://postgres:localdev@localhost:5432/custos
       # Same DSN, used by tests/test_vector_store_pgvector.py directly.
@@ -89,7 +116,7 @@ jobs:
       - name: Run tests
         run: pytest tests/ -q
 
-      - name: Run evals (deterministic, no LLM) against ${{ matrix.vector_backend }}
+      - name: Run evals (deterministic, no LLM) against ${{ matrix.vector_backend }} / ${{ matrix.agent_runtime }}
         run: python -m evals.harness
 
   frontend:

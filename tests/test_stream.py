@@ -101,14 +101,18 @@ class TestStreamAccessControlSharedPath:
         )
 
     def test_stream_uses_agent_loop(self) -> None:
-        """Verify /api/chat/stream uses AgentLoop for tool orchestration."""
+        """Verify /api/chat/stream builds its agent loop via the runtime
+        factory (build_agent_loop, CUSTOS_AGENT_RUNTIME-selectable) rather
+        than hardcoding a concrete implementation, and uses run_streaming
+        for tool orchestration.
+        """
         import inspect
 
         from custos import api
 
         stream_source = inspect.getsource(api.chat_stream)
-        assert "AgentLoop" in stream_source, (
-            "/api/chat/stream does not use AgentLoop"
+        assert "build_agent_loop" in stream_source, (
+            "/api/chat/stream does not use build_agent_loop"
         )
         assert "run_streaming" in stream_source, (
             "/api/chat/stream does not use run_streaming"

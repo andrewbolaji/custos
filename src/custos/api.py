@@ -41,7 +41,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
-from custos.agent_loop import AgentLoop, AgentResult
+from custos.agent_loop import AgentResult
+from custos.agent_runtime import build_agent_loop
 from custos.boot import ensure_index_ready, wait_for_qdrant
 from custos.embedder import LocalEmbedder
 from custos.ingest import ingest_corpus
@@ -386,7 +387,7 @@ def _run_agent(
 
     parts = ClaudeLLM.build_prompt(get_system_prompt(), chunks)
     registry = _build_registry(user_permissions)
-    loop = AgentLoop(llm=llm, registry=registry)
+    loop = build_agent_loop(llm=llm, registry=registry)
     return loop.run(parts, query, history=history)
 
 
@@ -634,7 +635,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourc
 
         parts = ClaudeLLM.build_prompt(get_system_prompt(), chunks)
         registry = _build_registry(request.user_permissions)
-        loop = AgentLoop(llm=llm, registry=registry)
+        loop = build_agent_loop(llm=llm, registry=registry)
         trimmed = _trim_history(request.history)
 
         try:

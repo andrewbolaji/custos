@@ -120,6 +120,7 @@ All limits are configurable via environment variables, adjustable without a rebu
 | `ANTHROPIC_API_KEY` | (required) | Anthropic API key. Read from environment only, never in the repo. |
 | `CUSTOS_VECTOR_BACKEND` | qdrant | Vector store backend: `qdrant` or `pgvector`. See ADR-001 (`docs/decisions/001-vector-store.md`). |
 | `CUSTOS_PGVECTOR_DSN` | (required when backend is pgvector) | Postgres connection string, e.g. `postgresql://user:password@host:5432/custos`. Apply schema first with `make migrate-pgvector`. |
+| `CUSTOS_AGENT_RUNTIME` | native | Agent loop implementation: `native` (hand-rolled) or `langgraph` (`langgraph.graph.StateGraph`). See the ADR (`docs/decisions/006-agent-runtime.md`). |
 
 ## Demo corpus
 
@@ -142,6 +143,7 @@ All PII is synthetic and uses reserved/invalid ranges. See `corpus/output/manife
 | `docs/decisions/` | Architectural decision records (vector store, embeddings, LLM, chunking) |
 | `docs/DECISIONS.md` | Running log of decisions and standing rules |
 | `docs/benchmarks/vector-backends.md` | Measured latency/recall for Qdrant vs. pgvector |
+| `docs/benchmarks/agent-runtimes.md` | Measured latency/token overhead for the native vs. LangGraph agent loop |
 
 ## Phases
 
