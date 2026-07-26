@@ -82,7 +82,7 @@ describe("useChat: never-stuck invariant", () => {
     expect(result.current.state.messages).toHaveLength(2); // user + assistant
   });
 
-  it("returns to idle after successful completion", () => {
+  it("returns to idle after successful completion", async () => {
     const { result } = renderHook(() => useChat());
 
     act(() => {
@@ -97,9 +97,16 @@ describe("useChat: never-stuck invariant", () => {
       lastCallbacks!.onToken("world.");
     });
 
-    // Simulate completion
+    // Simulate completion. Status stays "streaming" until the reveal
+    // catches up, so it must not flip synchronously here.
     act(() => {
       lastCallbacks!.onDone();
+    });
+    expect(result.current.state.status).toBe("streaming");
+
+    // Let the drain finish revealing "Hello world."
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 500));
     });
 
     expect(result.current.state.status).toBe("idle");
@@ -147,6 +154,164 @@ describe("useChat: never-stuck invariant", () => {
     expect(result.current.state.messages).toHaveLength(2);
     expect(result.current.state.messages[0].content).toBe("PTO policy");
     expect(result.current.state.messages[0].role).toBe("user");
+  });
+
+  it("cancel mid-stream stops appending further chunks", async () => {
+    const { result } = renderHook(() => useChat());
+
+    act(() => {
+      result.current.sendMessage("test question");
+    });
+
+    // First two chunks land, with a gap so the drain can catch up to them.
+    act(() => {
+      lastCallbacks!.onToken("Hello ");
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 300));
+    });
+    act(() => {
+      lastCallbacks!.onToken("world.");
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 300));
+    });
+
+    act(() => {
+      result.current.cancelStream();
+    });
+
+    // Two more chunks arrive from the now-cancelled request (the server
+    // may not notice the client gave up, or bytes were already on the
+    // wire when abort() was called).
+    act(() => {
+      lastCallbacks!.onToken(" more text");
+      lastCallbacks!.onTextReplace("Hello world. more text replaced");
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 300));
+    });
+
+    const msg = result.current.state.messages[1];
+    expect(msg.content).toContain("Hello world.");
+    expect(msg.content).not.toContain("more text");
+  });
+
+  it("cancel mid-stream leaves exactly the arrived partial text in place", async () => {
+    const { result } = renderHook(() => useChat());
+
+    act(() => {
+      result.current.sendMessage("test question");
+    });
+
+    act(() => {
+      lastCallbacks!.onToken("Partial answer");
+    });
+    // Let the drain fully catch up to what has arrived so far.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 500));
+    });
+
+    const beforeCancel = result.current.state.messages[1].content;
+    expect(beforeCancel).toBe("Partial answer");
+
+    act(() => {
+      result.current.cancelStream();
+    });
+
+    const msg = result.current.state.messages[1];
+    expect(msg.content).not.toBe("");
+    expect(msg.content).toBe(beforeCancel);
+    expect(result.current.state.status).toBe("idle");
+  });
+
+  it("cancel then send again is not contaminated by the cancelled turn", async () => {
+    const { result } = renderHook(() => useChat());
+
+    act(() => {
+      result.current.sendMessage("first question");
+    });
+    const staleCallbacks = lastCallbacks!;
+
+    act(() => {
+      staleCallbacks.onToken("Stale partial answer");
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 500));
+    });
+
+    act(() => {
+      result.current.cancelStream();
+    });
+
+    act(() => {
+      result.current.sendMessage("second question");
+    });
+    const freshCallbacks = lastCallbacks!;
+
+    act(() => {
+      freshCallbacks.onToken("Fresh answer");
+      freshCallbacks.onDone();
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 500));
+    });
+
+    // The stale (cancelled) request keeps delivering, as a server that
+    // never noticed the disconnect would.
+    act(() => {
+      staleCallbacks.onToken(" contamination");
+      staleCallbacks.onDone();
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 500));
+    });
+
+    // Cancel froze the first turn's partial text in place rather than
+    // clearing it, so the first question and its frozen answer remain,
+    // followed by the second (uncontaminated) turn.
+    const messages = result.current.state.messages;
+    expect(messages).toHaveLength(4);
+    expect(messages[0].content).toBe("first question");
+    expect(messages[1].content).toBe("Stale partial answer");
+    expect(messages[2].content).toBe("second question");
+    expect(messages[3].content).toBe("Fresh answer");
+    expect(messages[3].content).not.toContain("contamination");
+    expect(result.current.state.status).toBe("idle");
+  });
+
+  it("cancel after completion is a no-op", async () => {
+    const { result } = renderHook(() => useChat());
+
+    act(() => {
+      result.current.sendMessage("test question");
+    });
+    act(() => {
+      lastCallbacks!.onToken("Done answer.");
+      lastCallbacks!.onDone();
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 500));
+    });
+
+    expect(result.current.state.status).toBe("idle");
+    const stateBefore = result.current.state;
+
+    expect(() => {
+      act(() => {
+        result.current.cancelStream();
+      });
+    }).not.toThrow();
+
+    expect(result.current.state).toEqual(stateBefore);
+
+    // Cancelling twice in a row is equally harmless.
+    expect(() => {
+      act(() => {
+        result.current.cancelStream();
+      });
+    }).not.toThrow();
+    expect(result.current.state).toEqual(stateBefore);
   });
 
   it("transitions to error state on error, not stuck", () => {
@@ -237,7 +402,7 @@ describe("useChat: never-stuck invariant", () => {
     expect(assistantMsg.role).toBe("assistant");
   });
 
-  it("handles refused response correctly", () => {
+  it("handles refused response correctly", async () => {
     const { result } = renderHook(() => useChat());
 
     act(() => {
@@ -249,6 +414,12 @@ describe("useChat: never-stuck invariant", () => {
       lastCallbacks!.onDone();
     });
 
+    // onRefused sets content directly (no tokens were streamed), so the
+    // drain catches up within a frame, but it is still async.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 100));
+    });
+
     expect(result.current.state.status).toBe("idle");
     const assistantMsg = result.current.state.messages[1];
     expect(assistantMsg.refused).toBe(true);
@@ -257,7 +428,7 @@ describe("useChat: never-stuck invariant", () => {
     );
   });
 
-  it("attaches citations from the citations event", () => {
+  it("attaches citations from the citations event", async () => {
     const { result } = renderHook(() => useChat());
 
     act(() => {
@@ -279,6 +450,12 @@ describe("useChat: never-stuck invariant", () => {
       lastCallbacks!.onToken("You get 10 days.");
       lastCallbacks!.onCitations(mockCitations);
       lastCallbacks!.onDone();
+    });
+
+    // Let the drain finish revealing "You get 10 days." before the
+    // terminal status transition is expected.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 500));
     });
 
     expect(result.current.state.status).toBe("idle");
