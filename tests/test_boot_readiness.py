@@ -1,10 +1,16 @@
-"""Tests for Qdrant boot polling and health self-healing.
+"""Tests for vector store boot polling and health self-healing.
+
+wait_for_qdrant/ensure_index_ready work against any VectorStore backend
+(Qdrant or pgvector, selected by CUSTOS_VECTOR_BACKEND) -- these tests use a
+mocked store, so they exercise the polling/self-heal logic itself, not a
+specific backend. Names are historical (Qdrant was the only backend when
+they were written).
 
 Covers:
-- Boot with Qdrant unreachable then available: API becomes ready
-- Boot with Qdrant never available: gives up after timeout, reports degraded
-- Health endpoint self-heals when Qdrant comes back
-- Re-check rate limit prevents hammering Qdrant
+- Boot with the store unreachable then available: API becomes ready
+- Boot with the store never available: gives up after timeout, reports degraded
+- Health endpoint self-heals when the store comes back
+- Re-check rate limit prevents hammering the store
 """
 
 from __future__ import annotations

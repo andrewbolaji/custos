@@ -72,11 +72,11 @@ PII surfaced in answers or logs.
 ### T5 -- Unauthorized document access
 User A retrieves User B's documents.
 
-**Control:** Permissions attached at ingest. Retrieval query filtered by the requesting user's grants, enforced in the Qdrant query (server-side), not in the prompt. Both endpoints use the same `_retrieve_permitted_chunks()` path.
+**Control:** Permissions attached at ingest. Retrieval query filtered by the requesting user's grants, enforced inside the vector store query itself (server-side), not in the prompt. Both endpoints use the same `_retrieve_permitted_chunks()` path. Enforced identically on both supported backends -- a Qdrant payload filter or a Postgres `WHERE` clause, selected by `CUSTOS_VECTOR_BACKEND` -- see ADR-001 (`docs/decisions/001-vector-store.md`) for which mechanism applies per backend.
 
-**Eval:** `evals/suites/retrieval.py`, access-control hard-gate cases (4 cases). A `general` user queries that would match HR/finance docs. Zero restricted chunks retrieved.
+**Eval:** `evals/suites/retrieval.py`, access-control hard-gate cases (4 cases). A `general` user queries that would match HR/finance docs. Zero restricted chunks retrieved. CI runs this against both backends (matrix).
 
-**Status:** ENFORCED (4/4 pass, `unauthorized_chunks = 0`). The eval exercises the real retriever against the real Qdrant index.
+**Status:** ENFORCED (4/4 pass, `unauthorized_chunks = 0`) on both backends. The eval exercises the real retriever against the real index.
 
 ### T6 -- Tool abuse / unwanted side effects
 The agent (or an injected instruction) triggers a destructive or external action.

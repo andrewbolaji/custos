@@ -1,8 +1,12 @@
 """Boot-time index verification and idempotent reindexing.
 
-Checks the Qdrant collection's point count against the expected
-count derived from the corpus manifest. Reindexes on any mismatch
-(zero, partial, or stale), not only on zero.
+The vector store backend is selected by CUSTOS_VECTOR_BACKEND (qdrant or
+pgvector, default qdrant); both are supported here behind the same
+VectorStore interface, via AdminVectorStore (vector_store_config.py).
+
+Checks the store's row/point count against the expected count derived
+from the corpus manifest. Reindexes on any mismatch (zero, partial, or
+stale), not only on zero.
 
 The expected count is computed from the manifest at boot time, not
 hardcoded. If the corpus changes, the expected count changes and
@@ -31,7 +35,10 @@ def wait_for_qdrant(
     timeout: float = QDRANT_POLL_TIMEOUT,
     interval: float = QDRANT_POLL_INTERVAL,
 ) -> bool:
-    """Poll Qdrant until it responds or timeout elapses.
+    """Poll the configured vector store backend until it responds or timeout elapses.
+
+    Named for Qdrant (the default backend) but works against whichever
+    AdminVectorStore is passed in, including pgvector.
 
     Returns True if reachable, False if timeout exceeded.
     """
@@ -41,13 +48,13 @@ def wait_for_qdrant(
         attempt += 1
         try:
             store.count()
-            logger.info("Qdrant reachable after %d attempt(s)", attempt)
+            logger.info("Vector store reachable after %d attempt(s)", attempt)
             return True
         except Exception as exc:
-            logger.debug("Qdrant poll attempt %d failed: %s", attempt, exc)
+            logger.debug("Vector store poll attempt %d failed: %s", attempt, exc)
             if time.monotonic() + interval > deadline:
                 logger.error(
-                    "Qdrant not reachable after %.0fs (%d attempts)",
+                    "Vector store not reachable after %.0fs (%d attempts)",
                     timeout, attempt,
                 )
                 return False
@@ -88,7 +95,7 @@ def ensure_index_ready(
     try:
         actual = store.count()
     except Exception:
-        logger.warning("Could not query Qdrant; assuming index missing")
+        logger.warning("Could not query vector store; assuming index missing")
         actual = 0
 
     if actual == expected:

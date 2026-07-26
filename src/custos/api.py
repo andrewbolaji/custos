@@ -133,12 +133,13 @@ async def _lifespan(app_instance: FastAPI) -> AsyncGenerator[None, None]:
     global _index_ready, _index_chunks, _index_expected  # noqa: PLW0603
     _install_pii_formatter()
 
-    # Wait for Qdrant to become reachable, then verify/rebuild the index
+    # Wait for the configured vector store backend to become reachable,
+    # then verify/rebuild the index
     try:
         embedder = _get_embedder()
         store = _get_store()
         if not wait_for_qdrant(store):
-            logger.error("Boot: Qdrant unreachable, starting degraded")
+            logger.error("Boot: vector store unreachable, starting degraded")
             _index_ready = False
         else:
             _index_chunks, _index_expected = ensure_index_ready(embedder, store)
@@ -305,7 +306,8 @@ def _retrieve_permitted_chunks(query: str, user_permissions: list[str]) -> list[
 
     This is the single retrieval path for all corpus access, including
     corpus-touching tools. The permission filter is applied inside the
-    Qdrant query (server-side).
+    vector store query itself (server-side), on whichever backend
+    CUSTOS_VECTOR_BACKEND selects.
     """
     retriever = _get_retriever()
     return retriever.retrieve(query=query, user_permissions=user_permissions, k=5)
@@ -320,15 +322,15 @@ def _retrieve_and_scan(
     are never modified; only the prompt copies have matched spans replaced
     with a neutral placeholder.
 
-    Wraps retrieval so a Qdrant connection failure (index was ready at
-    boot but Qdrant died afterward) returns a clean 503 rather than
+    Wraps retrieval so a vector store connection failure (index was ready
+    at boot but the store died afterward) returns a clean 503 rather than
     propagating an exception into the SSE stream. The real error is
     logged server-side with full detail.
     """
     try:
         chunks = _retrieve_permitted_chunks(query, user_permissions)
     except Exception:
-        logger.exception("Retrieval failed (Qdrant may be down)")
+        logger.exception("Retrieval failed (vector store may be down)")
         raise HTTPException(status_code=503, detail=_UNAVAILABLE_MSG) from None
     if not chunks:
         return chunks, False
@@ -454,8 +456,8 @@ def health() -> dict[str, str]:
     """Public health check. Returns status only, no internal details.
 
     Self-healing: if currently degraded, attempts a re-verification
-    at most once every HEALTH_RECHECK_INTERVAL seconds. If Qdrant is
-    back and the index is valid, flips back to ok.
+    at most once every HEALTH_RECHECK_INTERVAL seconds. If the vector
+    store backend is back and the index is valid, flips back to ok.
     """
     global _index_ready, _index_chunks, _index_expected, _last_recheck  # noqa: PLW0603
 
@@ -475,7 +477,7 @@ def health() -> dict[str, str]:
                         _index_expected,
                     )
             except Exception:
-                logger.debug("Self-heal: Qdrant still unreachable")
+                logger.debug("Self-heal: vector store still unreachable")
 
     return {"status": "ok" if _index_ready else "degraded"}
 
@@ -596,7 +598,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourc
                 request.query, request.user_permissions
             )
         except Exception:
-            # Retrieval failed (Qdrant down after boot). Cannot raise
+            # Retrieval failed (vector store down after boot). Cannot raise
             # HTTPException here -- headers are already sent. Emit a
             # clean terminal event instead.
             logger.exception("Retrieval failed in stream generator")

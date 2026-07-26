@@ -26,7 +26,8 @@ class CustosRetriever(Retriever):
         """Embed the query and retrieve top-k permitted chunks.
 
         The permission filter is passed to the vector store, which applies it
-        server-side inside the Qdrant query. No post-filtering in Python.
+        server-side inside its own query (whichever VectorStore backend is
+        configured). No post-filtering in Python.
         """
         query_vector = self._embedder.embed([query])[0]
         return self._store.query(

@@ -23,3 +23,4 @@
 | 2026-07-17 | Structural chunking with char-offset spans (ADR-004) | Citations must resolve to real document spans. No naive fixed-size splitting. |
 | 2026-07-17 | Custom eval harness over promptfoo | Need fine-grained control over security evals (access control hard gates, injection payload tracking). |
 | 2026-07-17 | Byte-reproducible corpus with pinned seed | Deterministic output for evals, screenshots, and interviews. Same numbers on every rebuild. |
+| 2026-07-25 | pgvector implemented as a second VectorStore backend (ADR-001 Measured section) | Selected via CUSTOS_VECTOR_BACKEND, same interface, no calling-code changes. Access control enforced in the SQL query itself, parameterized, fail-closed. 61/61 evals pass on both backends; benchmarked in docs/benchmarks/vector-backends.md. |

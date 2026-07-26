@@ -19,7 +19,7 @@ Security is the headline, not a footnote. Every control ships with an adversaria
 ## Architecture
 
 ```
-Documents -> Ingest -> Chunk -> Embed (local) -> Qdrant (self-hosted)
+Documents -> Ingest -> Chunk -> Embed (local) -> Vector store (Qdrant or pgvector, self-hosted)
                                                        |
 User -> Chat UI -> FastAPI -> [Access filter] -> Retrieve -> LLM (Claude)
                       |                                        |
@@ -28,7 +28,7 @@ User -> Chat UI -> FastAPI -> [Access filter] -> Retrieve -> LLM (Claude)
 
 Every arrow crossing a trust boundary is a place where a security control lives.
 
-**Privacy by default:** documents are embedded locally (BGE-small). The vector store (Qdrant) is self-hosted. The only external call in the default config is the LLM generation request to Claude, and that is explicit and documented. A local-model option exists for deployments where nothing can leave.
+**Privacy by default:** documents are embedded locally (BGE-small). The vector store (Qdrant by default, or pgvector -- `CUSTOS_VECTOR_BACKEND`) is self-hosted either way. The only external call in the default config is the LLM generation request to Claude, and that is explicit and documented. A local-model option exists for deployments where nothing can leave.
 
 ## Tech stack
 
@@ -81,7 +81,8 @@ The `.gitleaks.toml` config allowlists the corpus directory only (synthetic PII 
 
 GitHub Actions runs on every push:
 - **Secret scan** (`gitleaks detect`) -- blocks on any finding
-- **Backend** -- ruff lint, pytest, deterministic evals (with Qdrant service)
+- **Lint** -- ruff, mypy --strict
+- **Backend** -- pytest, deterministic evals, matrixed over both vector store backends (Qdrant, pgvector)
 - **Frontend** -- tsc type check, vitest, production build
 
 LLM-dependent evals (`make evals-full`) are not run in CI. They require an API key and cost ~$0.50 per run. They are run manually before releases.

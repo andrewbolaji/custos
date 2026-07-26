@@ -17,6 +17,7 @@ services:
   # with `make migrate-pgvector`.
   pgvector:
     image: pgvector/pgvector:pg17
+    profiles: ["pgvector"]
     ports:
       - "5433:5432"
     environment:

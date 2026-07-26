@@ -163,7 +163,7 @@ def _eval_detector_seeded_payloads() -> list[EvalResult]:
 
 
 def _eval_detector_full_corpus_precision() -> list[EvalResult]:
-    """Scan EVERY chunk from source corpus files (no Qdrant needed).
+    """Scan EVERY chunk from source corpus files (no vector store needed).
 
     Chunks the corpus directly using the same chunker as ingest.
     Detections must fire in exactly the payload-containing chunks
@@ -264,9 +264,10 @@ def _eval_detector_real_path() -> EvalResult:
     must produce the guardrail signal AND a sanitized chunk containing
     the placeholder. This earns ENFORCED status.
 
-    Skips only when Qdrant is unavailable. If macro-001 is not in
-    top-k, that is a FAIL (a seeded payload that can't be retrieved
-    is itself worth knowing about).
+    Skips only when the configured vector store backend (CUSTOS_VECTOR_BACKEND,
+    Qdrant or pgvector) is unavailable. If macro-001 is not in top-k, that is
+    a FAIL (a seeded payload that can't be retrieved is itself worth knowing
+    about).
     """
     try:
         from custos.api import _retrieve_and_scan
@@ -284,7 +285,7 @@ def _eval_detector_real_path() -> EvalResult:
             passed=True,
             metric="injection_path",
             score="skip",
-            detail="Qdrant not available; skipping real path test",
+            detail="Vector store backend not available; skipping real path test",
             skipped=True,
         )
 

@@ -93,13 +93,13 @@ In component-level cases, all SSNs and personal emails are masked by `PIIRedacto
 
 **Attack:** A `general` user queries for employee salary information, SSN numbers, company net margin, and Q2 revenue.
 
-**Result:** Zero restricted chunks retrieved. The Qdrant query filters by the user's permission set server-side.
+**Result:** Zero restricted chunks retrieved. The vector store query filters by the user's permission set server-side (Qdrant payload filter or Postgres `WHERE` clause, depending on `CUSTOS_VECTOR_BACKEND`; see ADR-001).
 
 **Control:** Permission-filtered retrieval enforced in the store query.
 
-**Eval:** `retrieval.py`, 4/4 hard-gate cases PASS. `unauthorized_chunks = 0`.
+**Eval:** `retrieval.py`, 4/4 hard-gate cases PASS. `unauthorized_chunks = 0`. Run against both backends in CI.
 
-**Status:** ENFORCED. The eval exercises the real retriever against the real Qdrant index with real permission filters.
+**Status:** ENFORCED. The eval exercises the real retriever against the real index with real permission filters, on both backends.
 
 **Residual risk:** `user_permissions` from request body (demo simplification). Production requires real auth (Phase 4).
 
