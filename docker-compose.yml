@@ -10,5 +10,22 @@ services:
       QDRANT__SERVICE__GRPC_PORT: 6334
     restart: unless-stopped
 
+  # pgvector alternate backend (ADR-001). Not started by `make up` by
+  # default -- Qdrant is the default backend (CUSTOS_VECTOR_BACKEND=qdrant).
+  # Start explicitly with `docker compose up -d pgvector` when testing or
+  # running against CUSTOS_VECTOR_BACKEND=pgvector, then apply the schema
+  # with `make migrate-pgvector`.
+  pgvector:
+    image: pgvector/pgvector:pg17
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_PASSWORD: localdev
+      POSTGRES_DB: custos
+    volumes:
+      - pgvector_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
 volumes:
   qdrant_data:
+  pgvector_data:

@@ -1,4 +1,4 @@
-.PHONY: up down test test-ui evals evals-full corpus lint typecheck check install index serve ui
+.PHONY: up down test test-ui evals evals-full corpus lint typecheck check install index serve ui migrate-pgvector
 
 # Use the venv if it exists, otherwise fall back to python3.12 or python3
 PYTHON := $(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; elif command -v python3.12 >/dev/null 2>&1; then echo python3.12; else echo python3; fi)
@@ -24,10 +24,10 @@ down:
 # ---------------------------------------------------------------------------
 
 lint:
-	$(PYTHON) -m ruff check src/ tests/ evals/ corpus/
+	$(PYTHON) -m ruff check src/ tests/ evals/ corpus/ scripts/
 
 typecheck:
-	$(PYTHON) -m mypy src/ corpus/ evals/
+	$(PYTHON) -m mypy src/ corpus/ evals/ scripts/
 
 test:
 	$(PYTHON) -m pytest -v
@@ -46,6 +46,9 @@ corpus:
 
 index:
 	$(PYTHON) -m custos.ingest
+
+migrate-pgvector:
+	$(PYTHON) scripts/migrate_pgvector.py
 
 serve:
 	$(PYTHON) -m uvicorn custos.api:app --reload --host 127.0.0.1 --port 8000

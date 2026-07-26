@@ -88,6 +88,10 @@ _ACCESS_CONTROL_CASES = [
 ]
 
 
+def _backend_name() -> str:
+    return os.environ.get("CUSTOS_VECTOR_BACKEND", "qdrant").strip().lower()
+
+
 def _check_qdrant_available() -> bool:
     """Check if Qdrant is reachable."""
     try:
@@ -100,7 +104,7 @@ def _check_qdrant_available() -> bool:
         return False
 
 
-def _check_collection_indexed() -> bool:
+def _check_qdrant_indexed() -> bool:
     """Check if the custos collection exists and has points."""
     try:
         from qdrant_client import QdrantClient
@@ -113,25 +117,55 @@ def _check_collection_indexed() -> bool:
         return False
 
 
-def run(llm_evals: bool = False) -> list[EvalResult]:
-    """Run retrieval evals. Returns empty if Qdrant is not available."""
-    if not _check_qdrant_available():
-        logger.info("Qdrant not available; skipping retrieval evals")
-        return []
+def _check_pgvector_available_and_indexed() -> bool:
+    """Check if CUSTOS_PGVECTOR_DSN is reachable, migrated, and has rows."""
+    dsn = os.environ.get("CUSTOS_PGVECTOR_DSN")
+    if not dsn:
+        return False
+    try:
+        import psycopg
 
-    if not _check_collection_indexed():
-        logger.info("Collection not indexed; run `make index` first")
+        with psycopg.connect(dsn, connect_timeout=2) as conn, conn.cursor() as cur:
+            cur.execute("SELECT to_regclass('public.chunks')")
+            row = cur.fetchone()
+            if row is None or row[0] is None:
+                return False  # migration not applied yet
+            cur.execute("SELECT count(*) FROM chunks")
+            count_row = cur.fetchone()
+            return count_row is not None and count_row[0] > 0
+    except Exception:
+        return False
+
+
+def _check_backend_available() -> bool:
+    """Check if the configured backend (CUSTOS_VECTOR_BACKEND) is reachable."""
+    if _backend_name() == "pgvector":
+        return _check_pgvector_available_and_indexed()
+    return _check_qdrant_available() and _check_qdrant_indexed()
+
+
+def run(llm_evals: bool = False) -> list[EvalResult]:
+    """Run retrieval evals against whichever backend CUSTOS_VECTOR_BACKEND
+    selects (default: qdrant). Returns empty if that backend is not
+    available/indexed -- this is what makes the same 61-case suite run
+    against either backend: the harness and every case here are backend-
+    agnostic, and only construction (get_vector_store) and this
+    availability check branch on CUSTOS_VECTOR_BACKEND.
+    """
+    backend = _backend_name()
+    if not _check_backend_available():
+        logger.info("%s backend not available/indexed; skipping retrieval evals", backend)
         return []
 
     results: list[EvalResult] = []
 
-    # Import here to avoid loading models when Qdrant is not available
+    # Import here to avoid loading models when the backend is not available
     from custos.embedder import LocalEmbedder
     from custos.retriever import CustosRetriever
-    from custos.vector_store import QdrantVectorStore
+    from custos.vector_store_config import get_vector_store
 
     embedder = LocalEmbedder()
-    store = QdrantVectorStore(vector_size=embedder.dimension)
+    store = get_vector_store(vector_size=embedder.dimension)
     retriever = CustosRetriever(embedder=embedder, store=store)
 
     # --- LLM-free: right-source retrieval ---
@@ -150,7 +184,7 @@ def run(llm_evals: bool = False) -> list[EvalResult]:
             hits += 1
         results.append(
             EvalResult(
-                suite="retrieval",
+                suite=f"retrieval:{backend}",
                 case_name=f"right_source: {case['query'][:50]}",
                 passed=hit,
                 metric="doc_in_top5",
@@ -162,7 +196,7 @@ def run(llm_evals: bool = False) -> list[EvalResult]:
     precision = hits / len(_RETRIEVAL_CASES) if _RETRIEVAL_CASES else 0.0
     results.append(
         EvalResult(
-            suite="retrieval",
+            suite=f"retrieval:{backend}",
             case_name="right_source_aggregate",
             passed=precision >= 0.7,
             metric="precision@5",
@@ -190,7 +224,7 @@ def run(llm_evals: bool = False) -> list[EvalResult]:
         leaked = [c for c in chunks if c.doc_id in restricted_ids]
         results.append(
             EvalResult(
-                suite="access_control",
+                suite=f"access_control:{backend}",
                 case_name=f"hard_gate: {case['query'][:50]}",
                 passed=len(leaked) == 0,
                 metric="unauthorized_chunks",
@@ -216,6 +250,7 @@ def _run_llm_evals(retriever: object) -> list[EvalResult]:
 
     assert isinstance(retriever, CustosRetriever)
     llm = ClaudeLLM()
+    backend = _backend_name()
     results: list[EvalResult] = []
 
     # Abstention: unanswerable questions
@@ -235,7 +270,7 @@ def _run_llm_evals(retriever: object) -> list[EvalResult]:
         )
         results.append(
             EvalResult(
-                suite="retrieval",
+                suite=f"retrieval:{backend}",
                 case_name=f"abstention: {q[:40]}",
                 passed=answer.refused,
                 metric="refused",
@@ -271,7 +306,7 @@ def _run_llm_evals(retriever: object) -> list[EvalResult]:
         has_citations = len(answer.citations) > 0
         results.append(
             EvalResult(
-                suite="retrieval",
+                suite=f"retrieval:{backend}",
                 case_name=f"citation_resolution: {q[:40]}",
                 passed=all_resolved and has_citations and not answer.refused,
                 metric="citations_resolved",

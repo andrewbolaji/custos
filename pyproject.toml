@@ -8,6 +8,8 @@ dependencies = [
     "fastapi>=0.115,<1",
     "fpdf2>=2.8.1,<3",
     "numpy>=1.26,<2",
+    "pgvector>=0.3,<0.4",
+    "psycopg[binary]>=3.2,<4",
     "pyyaml>=6.0,<7",
     "qdrant-client>=1.18,<1.19",
     "scipy>=1.13,<1.14",
@@ -54,15 +56,21 @@ ignore = [
 "src/custos/api.py" = ["TCH001", "TCH003", "E402"]  # Chunk, AsyncGenerator used at runtime; E402: load_dotenv before imports
 "src/custos/tool_registry.py" = ["TCH001"]  # Tool used at runtime
 "src/custos/vector_store.py" = ["TCH003"]  # uuid used at runtime in _stable_id
-"src/custos/boot.py" = ["TCH001"]  # LocalEmbedder, QdrantVectorStore used at runtime
+"src/custos/boot.py" = ["TCH001"]  # LocalEmbedder, AdminVectorStore used at runtime
 "src/custos/llm.py" = ["TCH003"]  # Callable used at runtime in __init__ signature
 "evals/harness.py" = ["E402"]  # load_dotenv before imports
+"scripts/migrate_pgvector.py" = ["E402"]  # load_dotenv before imports
+"scripts/benchmark_vector_backends.py" = ["E402"]  # load_dotenv before imports
 
 [tool.mypy]
 python_version = "3.12"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = "pgvector.*"
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

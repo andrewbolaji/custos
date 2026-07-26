@@ -57,7 +57,7 @@ from custos.tools.file_ticket import FileTicketTool
 from custos.tools.search_documents import SearchDocumentsTool
 from custos.tools.send_email import SendEmailTool
 from custos.tools.summarize_section import SummarizeSectionTool
-from custos.vector_store import QdrantVectorStore
+from custos.vector_store_config import AdminVectorStore, get_vector_store
 
 logger = logging.getLogger(__name__)
 
@@ -182,7 +182,7 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 
 _embedder: LocalEmbedder | None = None
-_store: QdrantVectorStore | None = None
+_store: AdminVectorStore | None = None
 _retriever: CustosRetriever | None = None
 _llm: ClaudeLLM | None = None
 _pending_actions = PendingActionStore()
@@ -225,16 +225,14 @@ def _get_embedder() -> LocalEmbedder:
     return _embedder
 
 
-def _get_store() -> QdrantVectorStore:
+def _get_store() -> AdminVectorStore:
+    """Construct the vector store selected by CUSTOS_VECTOR_BACKEND.
+
+    Defaults to Qdrant (ADR-001). See vector_store_config.get_vector_store.
+    """
     global _store
     if _store is None:
-        qdrant_url = os.environ.get("QDRANT_URL", "http://localhost:6333")
-        collection = os.environ.get("QDRANT_COLLECTION", "custos")
-        _store = QdrantVectorStore(
-            url=qdrant_url,
-            collection_name=collection,
-            vector_size=_get_embedder().dimension,
-        )
+        _store = get_vector_store(vector_size=_get_embedder().dimension)
     return _store
 
 
