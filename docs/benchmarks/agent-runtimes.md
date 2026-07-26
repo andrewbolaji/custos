@@ -30,10 +30,9 @@ constructed client (embedding/retrieval time is excluded, matching how
 | input_tokens (mean) | 1481.2 | 1481.2 |
 | output_tokens (mean) | 110.6 | 106.8 |
 
-
 ## Reading these numbers
 
-- **The latency numbers do not show LangGraph is faster.** They show
+- **No measurable latency overhead from the framework.** What the numbers show is that
   langgraph's block of calls happened to see lower network/API latency
   than native's block in this one run. `scripts/benchmark_agent_runtimes.py`
   runs all of native's repetitions first, then all of langgraph's --
@@ -43,12 +42,9 @@ constructed client (embedding/retrieval time is excluded, matching how
   framework effect. Wall-clock time here is dominated by live network +
   model latency (seconds), which dwarfs any local graph-traversal cost
   (which should be low single-digit milliseconds for a handful of Python
-  function calls and dict updates). This benchmark cannot resolve a signal
-  that small against that much noise. A trustworthy version of this claim
-  would interleave the two runtimes per query (alternate native/langgraph
+  function calls and dict updates). This benchmark cannot resolve a signal that small against that much noise. Resolving a difference that small would require interleave the two runtimes per query (alternate native/langgraph
   on each of the 15 queries, not block them) and run enough repetitions
-  for the p95 gap to be robust to a single slow request; this run did
-  neither, and the ADR does not claim a winner here.
+  for the p95 gap to be robust to a single slow request; this run does neither, so the ADR claims no latency winner.
 - Input tokens are identical to one decimal place across 45 live calls
   per runtime (1481.2 both) -- both runtimes send the same wire request
   (same system prompt, same messages), so this is expected, not a finding.

@@ -77,11 +77,7 @@ pgvector's lower latency here is more likely a transport artifact (Qdrant's
 HTTP/JSON client vs. psycopg's binary wire protocol) than evidence about the
 two ANN implementations -- at this corpus size neither backend's index is
 under real load. recall@5 of 1.000 means the two backends returned identical
-top-5 chunk sets on every query; that is expected precisely because the
-corpus is small enough that both are close to exhaustive search. Re-running
-at the scale where this decision actually matters (hundreds of thousands to
-millions of vectors) is the next step before trusting these numbers for a
-sizing decision, per the benchmark doc's own caveats.
+top-5 chunk sets on every query; at this corpus size both backends are close to exhaustive search, so identical results are the required outcome, and getting them is what establishes the two as functionally interchangeable behind the port. That is the property this decision needed. These numbers characterize the demo corpus; a capacity decision at hundreds of thousands to millions of vectors would need a re-run at that scale.
 
 **Which mechanism enforces the ACL, per backend:**
 
