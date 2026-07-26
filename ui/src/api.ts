@@ -79,6 +79,14 @@ export function streamChat(
       let buffer = "";
 
       while (true) {
+        // Two guards, because they fail differently. The signal check exits
+        // cleanly between chunks. reader.cancel() releases the stream if
+        // we are mid-chunk. This does not rely on fetch abort propagating
+        // into the body stream on its own.
+        if (controller.signal.aborted) {
+          await reader.cancel().catch(() => {});
+          break;
+        }
         const { done, value } = await reader.read();
         if (done) break;
 

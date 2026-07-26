@@ -136,8 +136,11 @@ export function useChat(): UseChatReturn {
   }, []);
 
   // Completion drain: continue revealing at the same incremental rate.
-  // Used by onDone only.
-  const finishStreamDrain = useCallback(() => {
+  // Used by onDone only. The network stream can finish generating well
+  // before the throttled reveal has caught up to it, so onCaughtUp (the
+  // terminal status transition) fires only once shownRef actually reaches
+  // pendingRef.current.length, not when the network itself is done.
+  const finishStreamDrain = useCallback((onCaughtUp?: () => void) => {
     if (rafRef.current !== null) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
@@ -172,6 +175,7 @@ export function useChat(): UseChatReturn {
         rafRef.current = requestAnimationFrame(drainRemaining);
       } else {
         rafRef.current = null;
+        onCaughtUp?.();
       }
     };
     rafRef.current = requestAnimationFrame(drainRemaining);
@@ -245,8 +249,18 @@ export function useChat(): UseChatReturn {
       carryRef.current = 0;
       startStreamSync();
 
+      // Every callback below checks assistantId against the ref before
+      // touching state. A cancelled or superseded request's network layer
+      // can keep delivering events for a while after the fact (the server
+      // may not notice the client gave up, and already-buffered chunks
+      // can still be in flight), and without this guard those late events
+      // would mutate the shared pendingRef/shownRef buffers or repaint a
+      // message that the user already moved past.
+      const isStale = () => assistantId !== assistantIdRef.current;
+
       const controller = streamChat(query, perms, sessionId, {
         onStatus(text: string) {
+          if (isStale()) return;
           setState((prev) => ({
             ...prev,
             messages: prev.messages.map((m) =>
@@ -255,6 +269,7 @@ export function useChat(): UseChatReturn {
           }));
         },
         onToken(text: string) {
+          if (isStale()) return;
           // First token: clear status
           if (pendingRef.current === "") {
             setState((prev) => ({
@@ -269,6 +284,7 @@ export function useChat(): UseChatReturn {
           pendingRef.current += text;
         },
         onTextReplace(text: string) {
+          if (isStale()) return;
           // Reconciliation: update pending, clamp shown to the new
           // length (if the corrected text is shorter, e.g. artifact
           // stripped), and commit the visible prefix immediately so
@@ -285,6 +301,7 @@ export function useChat(): UseChatReturn {
           }));
         },
         onCitations(citations: Citation[]) {
+          if (isStale()) return;
           setState((prev) => ({
             ...prev,
             messages: prev.messages.map((m) =>
@@ -293,6 +310,7 @@ export function useChat(): UseChatReturn {
           }));
         },
         onToolUse(event: ToolUseEvent) {
+          if (isStale()) return;
           setState((prev) => ({
             ...prev,
             messages: prev.messages.map((m) =>
@@ -303,6 +321,7 @@ export function useChat(): UseChatReturn {
           }));
         },
         onGuardrail() {
+          if (isStale()) return;
           setState((prev) => ({
             ...prev,
             messages: prev.messages.map((m) =>
@@ -313,6 +332,7 @@ export function useChat(): UseChatReturn {
           }));
         },
         onConfirmAction(pending: PendingConfirmation) {
+          if (isStale()) return;
           setState((prev) => ({
             ...prev,
             status: "awaiting_confirmation",
@@ -332,6 +352,7 @@ export function useChat(): UseChatReturn {
           }));
         },
         onNotice(detail: string) {
+          if (isStale()) return;
           setState((prev) => ({
             ...prev,
             messages: prev.messages.map((m) =>
@@ -342,6 +363,7 @@ export function useChat(): UseChatReturn {
           }));
         },
         onRefused(text: string) {
+          if (isStale()) return;
           setState((prev) => ({
             ...prev,
             messages: prev.messages.map((m) =>
@@ -352,6 +374,7 @@ export function useChat(): UseChatReturn {
           }));
         },
         onError(detail: string) {
+          if (isStale()) return;
           setState((prev) => ({
             ...prev,
             status: "error",
@@ -364,20 +387,32 @@ export function useChat(): UseChatReturn {
           }));
         },
         onDone() {
-          finishStreamDrain();
+          if (isStale()) return;
+          // Clear statusText right away, but the terminal status
+          // transition itself waits for the reveal to catch up: see
+          // finishStreamDrain's onCaughtUp below.
           setState((prev) => ({
             ...prev,
-            status:
-              prev.status === "error"
-                ? "error"
-                : prev.status === "awaiting_confirmation"
-                  ? "awaiting_confirmation"
-                  : "idle",
-            // Clear statusText on any terminal path
             messages: prev.messages.map((m) =>
               m.id === assistantId ? { ...m, statusText: undefined } : m,
             ),
           }));
+          finishStreamDrain(() => {
+            if (isStale()) return;
+            // The reveal has now visibly finished. Only past this point
+            // is there nothing left on screen for Cancel to stop, so
+            // only past this point does the button leave "streaming".
+            assistantIdRef.current = "";
+            setState((prev) => ({
+              ...prev,
+              status:
+                prev.status === "error"
+                  ? "error"
+                  : prev.status === "awaiting_confirmation"
+                    ? "awaiting_confirmation"
+                    : "idle",
+            }));
+          });
         },
       }, history);
 
@@ -387,20 +422,49 @@ export function useChat(): UseChatReturn {
   );
 
   const cancelStream = useCallback(() => {
+    const cancelledAssistantId = assistantIdRef.current;
+    // Nothing in flight, either because the turn already finished (in
+    // which case onDone already reset this to "") or because cancel was
+    // already called once. Match the never-stuck invariant: cancel is
+    // always safe to call, even redundantly.
+    if (cancelledAssistantId === "") return;
+
     controllerRef.current?.abort();
     controllerRef.current = null;
     lastQueryRef.current = null;
-    stopStreamSync();
-    const cancelledAssistantId = assistantIdRef.current;
+    // Bump the guard before stopping the raf loop: any of this request's
+    // callbacks still in flight (onToken, onDone, ...) now see a mismatch
+    // against assistantIdRef and become no-ops, so a stray chunk that was
+    // already on the wire cannot revive the frozen bubble or bleed into
+    // whatever the user sends next.
     assistantIdRef.current = "";
-    // Remove the in-flight user + assistant message pair so cancel
-    // never leaves a stale query or empty bubble in the history.
+    stopStreamSync();
+
     setState((prev) => {
-      const msgs = prev.messages.filter((m) => {
-        if (m.id === cancelledAssistantId) return false;
-        // Remove the user message that immediately preceded it
-        const idx = prev.messages.findIndex((x) => x.id === cancelledAssistantId);
-        if (idx > 0 && m === prev.messages[idx - 1] && m.role === "user") return false;
+      const idx = prev.messages.findIndex((m) => m.id === cancelledAssistantId);
+      const hasVisibleContent = idx >= 0 && prev.messages[idx].content.length > 0;
+
+      if (hasVisibleContent) {
+        // The user asked to stop, not to undo: freeze exactly what has
+        // been revealed so far rather than clearing the bubble. Commit
+        // pendingRef/shownRef directly instead of trusting the last
+        // setState commit, since COMMIT_INTERVAL throttling can leave
+        // the rendered content a frame or two behind shownRef.
+        const frozen = pendingRef.current.slice(0, shownRef.current);
+        return {
+          ...prev,
+          status: "idle",
+          messages: prev.messages.map((m, i) =>
+            i === idx ? { ...m, content: frozen, statusText: undefined } : m,
+          ),
+        };
+      }
+
+      // Still "thinking", nothing was ever shown: remove the pending
+      // pair so cancel never leaves a stale query or empty bubble.
+      const msgs = prev.messages.filter((m, i) => {
+        if (i === idx) return false;
+        if (idx > 0 && i === idx - 1 && m.role === "user") return false;
         return true;
       });
       return { ...prev, messages: msgs, status: "idle" };
