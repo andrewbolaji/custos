@@ -118,3 +118,43 @@ jobs:
         run: npm run build
         env:
           VITE_API_URL: https://api.example.com
+
+  # custos.andrewbolaji.com is a Cloudflare Pages project that was created with
+  # Direct Upload rather than Git integration, so a git push does not by itself
+  # reach Cloudflare. Cloudflare does not allow converting an existing project
+  # to Git integration after the fact. This job replaces that missing Git
+  # integration by running wrangler pages deploy, which is itself a Direct
+  # Upload, against the same project once the test jobs above have passed.
+  deploy:
+    needs: [lint, backend, frontend]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: custos-deploy
+      cancel-in-progress: true
+    defaults:
+      run:
+        working-directory: ui
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+        env:
+          VITE_API_URL: https://api.custos.andrewbolaji.com
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=custos --branch=main
+          workingDirectory: ui
