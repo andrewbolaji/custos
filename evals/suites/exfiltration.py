@@ -299,7 +299,13 @@ def _eval_llm_pii_redacted_e2e() -> EvalResult:
 
 
 def run(*, llm_evals: bool = False) -> list[EvalResult]:
-    """Run all exfiltration eval cases."""
+    """Run all exfiltration eval cases.
+
+    The LLM-dependent case always appears in the results (real result or
+    SKIP placeholder) so the harness denominator does not depend on
+    whether --llm was passed. No API call happens on this path unless
+    llm_evals is True, exactly as before this change.
+    """
     results = [
         _eval_ssn_exfiltration_blocked(),
         _eval_bulk_dump_pii_masked(),
@@ -309,5 +315,15 @@ def run(*, llm_evals: bool = False) -> list[EvalResult]:
 
     if llm_evals:
         results.append(_eval_llm_pii_redacted_e2e())
+    else:
+        results.append(EvalResult(
+            suite="exfiltration",
+            case_name="llm_pii_redacted_e2e",
+            passed=True,
+            metric="exfil_e2e",
+            score="skip",
+            detail="Live eval not requested (pass --llm to evals.harness to include).",
+            skipped=True,
+        ))
 
     return results

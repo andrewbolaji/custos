@@ -63,6 +63,26 @@ _RETRIEVAL_CASES = [
     },
 ]
 
+# LLM-dependent cases (only run with --llm and a real ANTHROPIC_API_KEY).
+# Hoisted to module level so the placeholder SKIP path (_skipped_llm_eval_results)
+# and the real path (_run_llm_evals) produce identical case_name strings --
+# the harness denominator must be the same 10 case slots either way.
+_UNANSWERABLE_QUESTIONS = [
+    "What is the weather forecast for next Tuesday?",
+    "Who won the Super Bowl in 2025?",
+    "What is the recipe for chocolate cake?",
+    "What is the meaning of life?",
+    "How do I fix a flat tire on a bicycle?",
+]
+
+_ANSWERABLE_QUESTIONS = [
+    "What is the PTO accrual rate for new employees?",
+    "How much does a water heater replacement cost?",
+    "What are the emergency gas leak procedures?",
+    "What is the 401k match percentage?",
+    "What is the diagnostic trip fee?",
+]
+
 # Access-control cases: queries that would match restricted docs
 _ACCESS_CONTROL_CASES = [
     {
@@ -236,10 +256,56 @@ def run(llm_evals: bool = False) -> list[EvalResult]:
             )
         )
 
-    # --- LLM-dependent (only with --llm flag) ---
+    # --- LLM-dependent (only with --llm flag and a real API key) ---
+    # Every environment reports the same 10 case slots. When the eval does
+    # not actually run (no --llm, or --llm without a key), the slots still
+    # appear as SKIP so the harness denominator (61 deterministic + 12
+    # LLM-dependent = 73) never silently shrinks depending on how evals.harness
+    # was invoked. No API calls happen on this path -- _run_llm_evals is only
+    # called when both conditions hold, exactly as before this change.
     if llm_evals and os.environ.get("ANTHROPIC_API_KEY"):
         results.extend(_run_llm_evals(retriever))
+    elif llm_evals:
+        results.extend(_skipped_llm_eval_results(
+            "ANTHROPIC_API_KEY not set; skipping LLM eval."
+        ))
+    else:
+        results.extend(_skipped_llm_eval_results(
+            "Live eval not requested (pass --llm to evals.harness to include)."
+        ))
 
+    return results
+
+
+def _skipped_llm_eval_results(reason: str) -> list[EvalResult]:
+    """Placeholder SKIP results for the 10 LLM-dependent case slots.
+
+    Same case_name strings _run_llm_evals would produce, so a reader
+    diffing two evals.harness runs sees the same 10 slots flip between
+    SKIP and PASS/FAIL, not appear and disappear.
+    """
+    backend = _backend_name()
+    results = []
+    for q in _UNANSWERABLE_QUESTIONS:
+        results.append(EvalResult(
+            suite=f"retrieval:{backend}",
+            case_name=f"abstention: {q[:40]}",
+            passed=True,
+            metric="refused",
+            score="skip",
+            detail=reason,
+            skipped=True,
+        ))
+    for q in _ANSWERABLE_QUESTIONS:
+        results.append(EvalResult(
+            suite=f"retrieval:{backend}",
+            case_name=f"citation_resolution: {q[:40]}",
+            passed=True,
+            metric="citations_resolved",
+            score="skip",
+            detail=reason,
+            skipped=True,
+        ))
     return results
 
 
@@ -254,14 +320,7 @@ def _run_llm_evals(retriever: object) -> list[EvalResult]:
     results: list[EvalResult] = []
 
     # Abstention: unanswerable questions
-    unanswerable = [
-        "What is the weather forecast for next Tuesday?",
-        "Who won the Super Bowl in 2025?",
-        "What is the recipe for chocolate cake?",
-        "What is the meaning of life?",
-        "How do I fix a flat tire on a bicycle?",
-    ]
-    for q in unanswerable:
+    for q in _UNANSWERABLE_QUESTIONS:
         chunks = retriever.retrieve(query=q, user_permissions=["general"], k=5)
         answer = llm.generate(
             system_prompt=get_system_prompt(),
@@ -287,14 +346,7 @@ def _run_llm_evals(retriever: object) -> list[EvalResult]:
     # actually supported by the cited text?). Faithfulness is a harder
     # eval that requires claim extraction and entailment checking, and
     # is deferred. We name this accurately to under-claim, not over-claim.
-    answerable = [
-        "What is the PTO accrual rate for new employees?",
-        "How much does a water heater replacement cost?",
-        "What are the emergency gas leak procedures?",
-        "What is the 401k match percentage?",
-        "What is the diagnostic trip fee?",
-    ]
-    for q in answerable:
+    for q in _ANSWERABLE_QUESTIONS:
         chunks = retriever.retrieve(query=q, user_permissions=["general"], k=5)
         answer = llm.generate(
             system_prompt=get_system_prompt(),
