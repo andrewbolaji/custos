@@ -1,0 +1,26 @@
+# Copy this file to terraform.tfvars and fill in real values.
+# terraform.tfvars is gitignored, this .example file is the one committed.
+
+region  = "us-east-1" # pick the final region up front, see PREREQUISITES.md for data residency
+aws_profile = "custos-demo" # AWS CLI profile with credentials for the target account
+
+expected_account_id = "000000000000" # REPLACE with the real 12 digit account id, plans refuse to run otherwise
+
+environment = "demo"       # namespaces the ECR repo, log group, and secret path
+owner_tag   = "aintellect" # who this AWS bill traces back to
+
+vpc_cidr = "10.40.0.0/16" # must not collide with any network this account already connects to
+
+enable_egress = true  # true: service can call a hosted generation model. false: air-gapped, VPC endpoints only.
+alb_internal  = false # true: load balancer reachable only from inside the VPC, for VPN-only access
+
+llm_provider = "anthropic" # "anthropic" (direct API, needs enable_egress = true) or "bedrock" (VPC endpoint, works with enable_egress = false, no LLM credential in the deployment)
+
+container_port = 8000 # must match the port the Dockerfile exposes
+
+task_cpu    = 512  # Fargate CPU units, 1024 = 1 vCPU
+task_memory = 1024 # Fargate memory in MiB
+
+desired_count = 1 # number of running task instances
+
+log_retention_days = 7 # raise this if the customer's data handling policy requires a longer audit trail

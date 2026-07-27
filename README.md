@@ -28,7 +28,7 @@ User -> Chat UI -> FastAPI -> [Access filter] -> Retrieve -> LLM (Claude)
 
 Every arrow crossing a trust boundary is a place where a security control lives.
 
-**Privacy by default:** documents are embedded locally (BGE-small). The vector store (Qdrant by default, or pgvector -- `CUSTOS_VECTOR_BACKEND`) is self-hosted either way. The only external call in the default config is the LLM generation request to Claude, and that is explicit and documented. A local-model option exists for deployments where nothing can leave.
+**Privacy by default:** documents are embedded locally (BGE-small). The vector store (Qdrant by default, or pgvector -- `CUSTOS_VECTOR_BACKEND`) is self-hosted either way. The only external call in the default config is the LLM generation request to Claude, and that is explicit and documented. For the AWS customer deployment (see `deploy/`), setting `CUSTOS_LLM_PROVIDER=bedrock` routes that call to Amazon Bedrock over AWS's own network instead of the public internet, which supports a fully air-gapped deployment with no route to the public internet from any workload, and removes the LLM API key from the deployment entirely: no long-lived model credential exists anywhere in that configuration. The default configuration above still uses a stored Anthropic API key, and that is the correct, secure way to hold it when the call target is a third party endpoint rather than an AWS service.
 
 ## Tech stack
 
@@ -116,8 +116,10 @@ All limits are configurable via environment variables, adjustable without a rebu
 | `CUSTOS_ADMIN_TOKEN` | (required) | Bearer token for the admin status endpoint |
 | `CUSTOS_CORS_ORIGINS` | localhost dev origins | Comma-separated allowed CORS origins |
 | `CUSTOS_TRUST_PROXY` | off | Trust X-Forwarded-For (set to 1 behind Caddy in production) |
-| `CUSTOS_MODEL` | claude-sonnet-4-6 | Anthropic model ID |
-| `ANTHROPIC_API_KEY` | (required) | Anthropic API key. Read from environment only, never in the repo. |
+| `CUSTOS_LLM_PROVIDER` | anthropic | LLM backend: `anthropic` (calls `api.anthropic.com` directly) or `bedrock` (calls Amazon Bedrock, no API key, see `deploy/PREREQUISITES.md`). |
+| `CUSTOS_MODEL` | claude-sonnet-4-6 | Anthropic model ID. Only read when `CUSTOS_LLM_PROVIDER=anthropic`. |
+| `ANTHROPIC_API_KEY` | (required) | Anthropic API key. Read from environment only, never in the repo. Required when `CUSTOS_LLM_PROVIDER=anthropic`, the default; not read at all in `bedrock` mode. |
+| `CUSTOS_BEDROCK_REGION` | `AWS_REGION`, else `us-east-1` | AWS region for the Bedrock inference endpoint. Only read when `CUSTOS_LLM_PROVIDER=bedrock`. |
 | `CUSTOS_VECTOR_BACKEND` | qdrant | Vector store backend: `qdrant` or `pgvector`. See ADR-001 (`docs/decisions/001-vector-store.md`). |
 | `CUSTOS_PGVECTOR_DSN` | (required when backend is pgvector) | Postgres connection string, e.g. `postgresql://user:password@host:5432/custos`. Apply schema first with `make migrate-pgvector`. |
 | `CUSTOS_AGENT_RUNTIME` | native | Agent loop implementation: `native` (hand-rolled) or `langgraph` (`langgraph.graph.StateGraph`). See the ADR (`docs/decisions/006-agent-runtime.md`). |

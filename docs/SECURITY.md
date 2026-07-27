@@ -42,6 +42,10 @@ Every security protection has an automated test that proves it works:
 
 These tests run automatically and catch any regression before it reaches production.
 
+## Where the model credential lives
+
+If you deploy Custos in the standard configuration, the key that lets Custos talk to its AI model is stored encrypted, and only the one service that needs it can read it. If you deploy in the air-gapped AWS configuration (Amazon Bedrock as the model backend, see `deploy/PREREQUISITES.md`), there is no key at all to store: the service authenticates to the model using temporary credentials that AWS itself issues to the running service and rotates automatically, and nothing sits in a secrets store waiting to be stolen. Both configurations are supported. Ask your deployment contact which one you are running.
+
 ## What we do not claim
 
 Scope of these guarantees:

@@ -40,15 +40,18 @@ import re
 import time
 from collections.abc import Generator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import anthropic
 
 from custos.interfaces import Citation, ToolCall, ToolResult
-from custos.llm import ClaudeLLM, PromptParts
+from custos.llm import PromptParts, resolve_response
 from custos.pending_actions import PendingActionStore
 from custos.pii import PIIRedactor
 from custos.tool_registry import ToolRegistry
+
+if TYPE_CHECKING:
+    from custos.llm_config import AnyLLM
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +122,7 @@ class AgentLoop:
 
     def __init__(
         self,
-        llm: ClaudeLLM,
+        llm: AnyLLM,
         registry: ToolRegistry,
         *,
         max_steps: int = DEFAULT_MAX_STEPS,
@@ -197,7 +200,7 @@ class AgentLoop:
             # If no tool calls, this is the final answer
             if not tool_use_blocks:
                 full_text = "\n".join(text_parts)
-                answer = ClaudeLLM.resolve_response(
+                answer = resolve_response(
                     full_text, prompt_parts.chunk_lookup
                 )
                 events.append(AgentEvent(kind="text", data={"text": answer.text}))
@@ -468,7 +471,7 @@ class AgentLoop:
             if not tool_use_blocks:
                 # Final answer. resolve_response is the authority.
                 full_text = "".join(accumulated_text)
-                answer = ClaudeLLM.resolve_response(
+                answer = resolve_response(
                     full_text, prompt_parts.chunk_lookup
                 )
 

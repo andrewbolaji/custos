@@ -22,7 +22,8 @@ if TYPE_CHECKING:
     from collections.abc import Generator
 
     from custos.agent_loop import AgentEvent, AgentResult
-    from custos.llm import ClaudeLLM, PromptParts
+    from custos.llm import PromptParts
+    from custos.llm_config import AnyLLM
     from custos.pending_actions import PendingActionStore
     from custos.tool_registry import ToolRegistry
 
@@ -63,7 +64,7 @@ class AgentLoopProtocol(Protocol):
 
 
 def build_agent_loop(
-    llm: ClaudeLLM,
+    llm: AnyLLM,
     registry: ToolRegistry,
     *,
     max_steps: int = DEFAULT_MAX_STEPS,
