@@ -157,3 +157,18 @@ Two things `terraform destroy` will do that are easy to miss:
 - It deletes the CloudWatch log group along with every log line inside it,
   permanently. If the engagement or a compliance requirement needs those logs
   retained, export them before running destroy, not after.
+
+## What CI checks
+
+Every push and pull request against this repository runs `terraform fmt
+-check -recursive`, `terraform init -backend=false`, and `terraform validate`
+against this directory, and none of those three commands need AWS
+credentials to run.
+
+That coverage has a real boundary. `lifecycle.precondition` blocks, like the
+account guard and the egress and provider guard in `guard.tf`, and `count`
+expressions, like the ones in `network.tf` that toggle resources on and off
+between egress-enabled and air-gapped mode, are both evaluated at plan time,
+not at validate time, so CI does not exercise either. The air-gapped guard
+described above is enforced when you run `terraform plan` yourself, as in
+step 5 of the command sequence, not by this repository's CI.
