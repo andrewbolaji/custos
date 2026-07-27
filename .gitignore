@@ -66,3 +66,4 @@ evals/results/
 *.tfvars
 !*.tfvars.example
 crash.log
+*.tfplan
