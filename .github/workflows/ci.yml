@@ -155,6 +155,45 @@ jobs:
         env:
           VITE_API_URL: https://api.example.com
 
+  # terraform validate checks that deploy/terraform is syntactically valid,
+  # internally consistent, and that every resource argument used is a real
+  # argument for that resource type in the aws provider schema. It runs
+  # entirely against the provider schema, not against any live AWS account,
+  # which is why -backend=false is enough here: no S3 bucket, no DynamoDB
+  # lock table and no AWS credentials are needed for this job to run. That
+  # also means it is safe to run on a pull request opened from a fork.
+  # What it does not do is evaluate count, for_each, or
+  # lifecycle.precondition blocks, because those only run at plan time, not
+  # at validate time. Concretely, the terraform_data.egress_provider_guard
+  # precondition in guard.tf, which refuses to let an air-gapped deployment
+  # be configured with the Anthropic provider, is not exercised by this
+  # job, so a change that broke that guard would still pass CI. terraform
+  # plan would catch it, but plan needs real AWS credentials, and the
+  # account guard in guard.tf restricts this module to one specific account
+  # id, so a plan job would need federated OIDC credentials scoped into
+  # that account. That is a deliberate follow up, not an oversight.
+  terraform:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: deploy/terraform
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.15.8"
+          terraform_wrapper: false
+
+      - name: Format check
+        run: terraform fmt -check -recursive
+
+      - name: Init (no backend)
+        run: terraform init -backend=false
+
+      - name: Validate
+        run: terraform validate
+
   # custos.andrewbolaji.com is a Cloudflare Pages project that was created with
   # Direct Upload rather than Git integration, so a git push does not by itself
   # reach Cloudflare. Cloudflare does not allow converting an existing project
