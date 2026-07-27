@@ -52,6 +52,12 @@ def get_vector_store(vector_size: int) -> AdminVectorStore:
 
     if backend == "pgvector":
         dsn = os.environ.get("CUSTOS_PGVECTOR_DSN")
+        # Strip whitespace: a trailing newline in the DSN breaks the
+        # connection string the same way an unstripped API key breaks the
+        # Anthropic client -- fails downstream in libpq/psycopg2 instead of
+        # here, further from the actual cause.
+        if dsn is not None:
+            dsn = dsn.strip()
         if not dsn:
             raise RuntimeError(
                 "CUSTOS_VECTOR_BACKEND=pgvector requires CUSTOS_PGVECTOR_DSN to be set."

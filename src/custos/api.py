@@ -212,7 +212,10 @@ HEALTH_RECHECK_INTERVAL = 30.0  # seconds between re-verification attempts
 _self_heal_lock = threading.Lock()
 
 # Admin token: must be set in the environment. Never in the repo.
-_ADMIN_TOKEN = os.environ.get("CUSTOS_ADMIN_TOKEN", "")
+# .strip(): a trailing newline in the configured value would make
+# secrets.compare_digest() never match the header-derived comparison string,
+# silently locking out a correctly-typed token.
+_ADMIN_TOKEN = os.environ.get("CUSTOS_ADMIN_TOKEN", "").strip()
 
 # Conversation memory: last N messages (sliding window)
 MAX_HISTORY_MESSAGES = 20
@@ -290,6 +293,13 @@ def _get_llm() -> AnyLLM:
     global _llm
     if _llm is None:
         api_key = os.environ.get("ANTHROPIC_API_KEY")
+        # Strip whitespace: a trailing newline in the key makes h11 reject
+        # the request as an illegal header value before a socket ever
+        # opens, surfacing as anthropic.APIConnectionError: Connection
+        # error -- and h11's exception message embeds the offending value,
+        # i.e. the full API key, which then ends up in logs.
+        if api_key is not None:
+            api_key = api_key.strip()
         if get_provider() == "anthropic" and not api_key:
             raise HTTPException(
                 status_code=503,
