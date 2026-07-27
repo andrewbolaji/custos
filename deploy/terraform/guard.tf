@@ -18,3 +18,21 @@ resource "terraform_data" "account_guard" {
     }
   }
 }
+
+# enable_egress = false with llm_provider = "anthropic" plans and applies
+# cleanly and then fails hours later, in production, as a connection timeout:
+# the private subnets have no route out, the container starts, the ALB health
+# check passes, and every real query hangs until it times out. This guard
+# turns that into a plan-time failure instead. A variable validation block
+# cannot do this, because validation cannot reference a different variable,
+# so this uses the same precondition pattern as the account guard above.
+resource "terraform_data" "egress_provider_guard" {
+  input = "${var.enable_egress}-${var.llm_provider}"
+
+  lifecycle {
+    precondition {
+      condition     = !(var.enable_egress == false && var.llm_provider == "anthropic")
+      error_message = "Refusing to proceed. Air-gapped mode (enable_egress = false) cannot use the Anthropic provider: the private subnets have no route to api.anthropic.com, and no VPC endpoint for it can exist, because PrivateLink covers AWS services and Marketplace partner services, not arbitrary third party SaaS. Set llm_provider = \"bedrock\" for an air-gapped deployment, or set enable_egress = true to keep the Anthropic provider."
+    }
+  }
+}

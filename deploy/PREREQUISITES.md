@@ -58,38 +58,64 @@ against your account.
 
 ## Network and egress: a real choice, not a checkbox
 
-The service needs to call a hosted large language model (currently Anthropic)
-to generate answers. That call has to leave your network somehow, or not
-leave it at all. This module builds either path, controlled by one variable,
-`enable_egress`.
+The service needs to call a hosted large language model to generate answers.
+Which model it calls, and whether that call leaves your network at all, is
+now a decision made by two independent Terraform variables together, not one
+checkbox: `enable_egress` and `llm_provider`. They combine into four possible
+deployments, three of which work and one of which does not.
 
-**Egress enabled** (`enable_egress = true`, the default): we create a NAT
-gateway. The ECS tasks, in private subnets, can reach the public internet
-through it. Simple, and the standard path for any deployment that intends to
-call a hosted model. Costs about $0.045/hour for the NAT gateway itself, plus
-data processing.
+`enable_egress = true`, `llm_provider = "anthropic"` (the default): we create
+a NAT gateway. The ECS tasks, in private subnets, can reach the public
+internet through it, and the service calls `api.anthropic.com` directly.
+Simple, and the standard path for a deployment with no air-gap requirement.
+Costs about $0.045/hour for the NAT gateway itself, plus data processing.
 
-**Air-gapped** (`enable_egress = false`): no NAT gateway, no default route out
-of the private subnets, at all. Instead we create VPC endpoints so the service
-can still pull its own container image, write logs, and read its secret,
-without ever reaching the public internet. This is the choice if your policy
-requires no direct internet path from any workload, full stop. Costs about
-the same, or slightly less, than the NAT path, priced per interface endpoint.
+`enable_egress = true`, `llm_provider = "bedrock"`: also works. There is
+still a NAT gateway, but the model call goes to Amazon Bedrock over AWS's own
+network rather than to a third party endpoint. Worth choosing over the
+default if you want Bedrock for billing or procurement reasons even though
+you have no air-gap requirement.
 
-The real consequence: with egress disabled, the service cannot call an
-externally hosted generation model. If you choose air-gapped, that changes
-what Custos can do, not just how it is deployed, and that architectural
-conversation needs to happen before deployment, not after.
+`enable_egress = false`, `llm_provider = "bedrock"`: **air-gapped and fully
+functional.** No NAT gateway, no route to the public internet from any
+workload, and the model call reaches Bedrock over a private
+`bedrock-runtime` VPC interface endpoint that never leaves AWS's network.
+This is the combination to choose if your policy requires no direct internet
+path from any workload, full stop. Costs about the same, or slightly less,
+than the NAT path, priced per interface endpoint: four interface endpoints
+(`ecr.api`, `ecr.dkr`, `logs`, `bedrock-runtime`) at roughly $0.01/hour each,
+plus one S3 gateway endpoint at no hourly charge.
 
-**Blocks if missing:** we default to egress enabled. If your policy actually
-requires air-gapped and nobody said so, we build the wrong network topology
-and have to rebuild it.
+`enable_egress = false`, `llm_provider = "anthropic"`: **does not work.** The
+private subnets have no route out, there is no VPC endpoint for
+`api.anthropic.com`, and one cannot be created, because AWS PrivateLink
+reaches AWS services and AWS Marketplace partner services, not arbitrary
+third party SaaS. The failure mode here is the nasty kind: the apply
+succeeds, the container starts, the ALB health check passes, and only then
+does every real query fail on a connection timeout, discovered in production
+rather than at plan time. A plan-time guard in the Terraform module now
+refuses to build this combination at all (see the `egress_provider_guard`
+precondition in `guard.tf`), so this failure mode is caught before an apply
+ever runs, not after.
 
-## Generation model API key
+If air-gapped is your requirement, the combination to ask for is
+`enable_egress = false` with `llm_provider = "bedrock"`, and that
+architectural conversation, which model backend you are actually going to
+run on, needs to happen before deployment, not after.
 
-Custos calls Anthropic's API to generate answers. Someone in your
-organization, or in ours depending on the commercial arrangement, holds an
-Anthropic API key.
+**Blocks if missing:** we default to egress enabled with the Anthropic
+provider. If your policy actually requires air-gapped and nobody said so, we
+build the wrong network topology and the wrong model provider, and have to
+rebuild both.
+
+## Generation model credentials
+
+What this section asks of you depends on which `llm_provider` you chose
+above.
+
+**Anthropic path** (`llm_provider = "anthropic"`). Custos calls Anthropic's
+API to generate answers. Someone in your organization, or in ours depending
+on the commercial arrangement, holds an Anthropic API key.
 
 Decide now: whose account is the key issued under, who is the named holder of
 record, and who is responsible for rotating it if it is ever exposed. The key
@@ -102,6 +128,67 @@ holds it.
 then fail every actual query with an authentication error the moment someone
 tries to use it. This is the classic "it's up but it doesn't work" failure
 mode, so have the key ready before go-live, not during.
+
+**Bedrock path** (`llm_provider = "bedrock"`). There is no key. The running
+ECS task authenticates to Amazon Bedrock as its own task role, using SigV4,
+and the credentials for that role are delivered to the container by the ECS
+agent and rotate automatically. Consequently, in this mode, no long-lived
+model credential exists anywhere in the deployment: not in Secrets Manager,
+because no such secret is created, not in the task definition, and not in an
+environment variable or on disk. Nothing to issue, nothing to hand off,
+nothing to rotate.
+
+This statement is scoped narrowly to model access credentials. It says
+nothing about credentials used for anything other than calling the model, and
+nothing about the deployment credentials used to run Terraform itself, which
+are a separate concern covered in "The IAM role you create for us" above.
+
+**Blocks if missing:** two Bedrock-specific prerequisites still have to be in
+place before go-live even though there is no key to hand over. See "Bedrock
+account prerequisites" below.
+
+## Bedrock account prerequisites (only if `llm_provider = "bedrock"`)
+
+These two prerequisites live in AWS account state, not in Terraform code,
+which means `terraform plan` and `terraform apply` both succeed whether or
+not either one is actually satisfied. Both block go-live, and both have lead
+time, so read this section even though nothing here shows up as a plan-time
+error.
+
+Model access. Anthropic's models must be enabled in the target account
+before any invocation succeeds. If this is the first time anyone has used
+Anthropic models on Bedrock in this account, someone submits a use case
+details form, once per account, or once at the organization's management
+account to cover every member account under it. **Blocks if missing:** the
+apply succeeds, the container starts, the health check passes, and the first
+real query returns an access denied error. The same "it's up but it doesn't
+work" shape as a missing API key, just moved from the Anthropic path to the
+Bedrock path.
+
+Daily token quota. Bedrock's default per-model quotas vary by account, and
+AWS documents that the defaults assigned to an account may depend on factors
+including payment history. A newly created account, including one created
+through AWS Organizations for this deployment, can land with a daily token
+quota of zero for the model you intend to use. Verify the quota before
+deployment day:
+
+```
+aws service-quotas get-service-quota \
+  --service-code bedrock \
+  --quota-code L-B29C9321 \
+  --region us-east-1 \
+  --query 'Quota.[QuotaName,Value,Adjustable]' \
+  --output text
+```
+
+`L-B29C9321` is the quota code for the Claude Sonnet 4.6 daily token quota
+specifically. Every model has its own code, so check the code for whichever
+model you are actually deploying. This quota is not self-service adjustable,
+so raising it means opening a Support Center case, not calling an API.
+**Blocks if missing:** every query fails with a throttling error reading "Too
+many tokens per day," and the turnaround on a support case is measured in
+days, so treat this as a "file it two weeks out" item, not a deployment day
+item.
 
 ## Custom domain and TLS
 

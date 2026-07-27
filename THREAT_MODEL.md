@@ -99,7 +99,7 @@ Prompt bombs, huge inputs, runaway agent loops.
 ### T8 -- Supply chain / secrets
 Committed keys, poisoned deps.
 
-**Control:** `.env` is git-ignored. Pinned deps. All corpus PII is synthetic reserved-range.
+**Control:** `.env` is git-ignored. Pinned deps. All corpus PII is synthetic reserved-range. In the default configuration (`CUSTOS_LLM_PROVIDER=anthropic`), the model API key lives in an environment variable or, for the AWS customer deployment, an AWS Secrets Manager secret read only by the ECS execution role, never committed or in Terraform state. In the AWS customer deployment's Bedrock mode (`CUSTOS_LLM_PROVIDER=bedrock`), this threat is structurally narrower for model access specifically: there is no long-lived model credential to leak in the first place, since the running task authenticates to Bedrock as its own ECS task role via SigV4. This says nothing about other secrets (deployment credentials, admin tokens) which still apply the general control above regardless of `llm_provider`.
 
 **Eval:** Out-of-band (manual inspection; gitleaks/trufflehog is a Phase 4 CI integration).
 
