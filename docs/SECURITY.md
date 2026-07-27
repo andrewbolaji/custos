@@ -44,10 +44,9 @@ These tests run automatically and catch any regression before it reaches product
 
 ## What we do not claim
 
-We are honest about scope:
+Scope of these guarantees:
 
-- **Date of birth, salary, address, and personal names** are not automatically masked yet. Masking them reliably requires more advanced AI techniques that would also mask legitimate data (like product prices or office addresses). Document permissions are the primary protection for these.
-- **User login and authentication** is a demo simplification. Production deployment would use real identity verification (SSO, JWT tokens).
+- **Date of birth, salary, address, and personal names** are not automatically masked yet. Detectors precise enough to catch these categories also catch legitimate data of the same shape, such as product prices and office addresses, and a masker with that false-positive rate degrades retrieval more than it protects. Document permissions are the primary control here.
+- **Identity** is supplied by the deployment, not by Custos. Access control is enforced at retrieval against whatever user context is passed in, so an SSO or JWT integration changes the identity source without touching the ACL path.
 - We defend the application layer. Network security, infrastructure hardening, and physical security are handled by the hosting environment.
 
-Honesty about limits is a feature, not a weakness. We would rather tell you what is proven than claim more than we can demonstrate.
