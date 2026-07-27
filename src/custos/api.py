@@ -25,12 +25,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import asyncio
 import json
 import logging
 import os
 import secrets
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from typing import Any
@@ -391,6 +392,50 @@ def _run_agent(
     return loop.run(parts, query, history=history)
 
 
+_EXHAUSTED = object()
+
+
+async def _advance_in_thread[T](gen: Generator[T, None, None]) -> T | None:
+    """Advance a synchronous generator by one step without blocking the
+    event loop. Returns None once the generator is exhausted.
+
+    AgentLoop.run_streaming (and LangGraphAgentLoop.run_streaming) are
+    plain synchronous generators wrapping the Anthropic SDK's sync
+    streaming client. Every blocking call one step makes -- the Anthropic
+    HTTP read, a tool call that re-enters the retriever, synchronous disk
+    logging -- happens inside whichever single `next()` call advances the
+    generator past its next `yield`. Running that call in the default
+    thread pool is what keeps the event loop free to service other
+    concurrent streaming requests while it blocks.
+
+    This bridges via a thread rather than switching to the Anthropic
+    SDK's async client. Both agent loop implementations are plain sync
+    generators, and existing tests -- notably
+    tests/test_agent_loop.py::test_cancel_exits_stream_context, which
+    calls `.close()` on the generator directly and asserts the SDK
+    stream's __exit__ ran -- rely on that exact shape. Converting
+    run_streaming to an async generator would break generator-close-based
+    cancellation and every test that drives it synchronously: a strictly
+    larger and riskier change than bridging at this one call site.
+
+    `next()` raising StopIteration must be caught INSIDE the worker
+    thread, not after: asyncio's executor-future wrapping refuses to
+    propagate a StopIteration out of `to_thread` at all (it raises
+    "StopIteration interacts badly with generators and cannot be raised
+    into a Future" instead), so catching it at the await site here is too
+    late.
+    """
+
+    def _next_or_sentinel() -> T | object:
+        try:
+            return next(gen)
+        except StopIteration:
+            return _EXHAUSTED
+
+    result = await asyncio.to_thread(_next_or_sentinel)
+    return None if result is _EXHAUSTED else result  # type: ignore[return-value]
+
+
 # ---------------------------------------------------------------------------
 # Request / response models
 # ---------------------------------------------------------------------------
@@ -595,8 +640,8 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourc
         }
 
         try:
-            chunks, injection_detected = _retrieve_and_scan(
-                request.query, request.user_permissions
+            chunks, injection_detected = await asyncio.to_thread(
+                _retrieve_and_scan, request.query, request.user_permissions
             )
         except Exception:
             # Retrieval failed (vector store down after boot). Cannot raise
@@ -646,10 +691,21 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourc
                 pending_store=_pending_actions,
                 history=trimmed,
             )
-            for event in stream_iter:
+            while True:
+                # stream_iter is a plain synchronous generator (both
+                # AgentLoop.run_streaming and LangGraphAgentLoop.run_streaming
+                # implement it that way -- see _advance_in_thread's
+                # docstring for why). Advancing it in the default thread
+                # pool, one step per SSE event, is what lets a second
+                # concurrent request's ASGI task run while this one is
+                # blocked inside a step.
+                event = await _advance_in_thread(stream_iter)
+                if event is None:
+                    break
                 # Stop streaming if the client disconnected
                 if await http_request.is_disconnected():
                     logger.info("Client disconnected, stopping stream")
+                    await asyncio.to_thread(stream_iter.close)
                     break
                 if event.kind == "text_delta":
                     yield {

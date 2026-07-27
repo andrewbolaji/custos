@@ -113,6 +113,15 @@ jobs:
       - name: Index corpus (${{ matrix.vector_backend }})
         run: python -m custos.ingest
 
+      # tests/test_stream_concurrency.py (two concurrent /api/chat/stream
+      # requests must progress concurrently, not serialize behind a
+      # blocked event loop) self-skips on every leg except qdrant/native
+      # via a pytest.mark.skipif inside the test -- it mocks out the LLM,
+      # retriever, and tool registry entirely, so CUSTOS_VECTOR_BACKEND /
+      # CUSTOS_AGENT_RUNTIME cannot change its outcome, and it is
+      # timing-sensitive (sleep-based), so running it 3x would only add
+      # flake risk for zero extra coverage. Expect 1 fewer collected test
+      # on the pgvector and langgraph legs than on qdrant/native.
       - name: Run tests
         run: pytest tests/ -q
 
