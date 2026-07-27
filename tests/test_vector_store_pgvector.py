@@ -260,3 +260,46 @@ class TestUpsertIsIdempotent:
 
         results = store.query(_vec(2), k=10, filters={"user_permissions": ["general"]})
         assert results == []
+
+
+class TestPingCountContractSplit:
+    """count() swallows every exception and returns 0 on failure by design
+    (ensure_index_ready needs 0 to mean "needs reindexing", not
+    "unreachable"). ping() exists specifically for callers -- api.py's
+    _check_store_connected(), boot.py's wait_for_qdrant -- that need the
+    real reachability signal instead. This runs against the real class, not
+    a mock, so it verifies psycopg's actual behavior rather than a test
+    double's assumption about it.
+
+    Uses its own PgVectorStore instances, closed within each test, rather
+    than the shared `store` fixture -- that fixture's teardown calls
+    recreate_collection() after yielding, which would raise against a
+    connection a test already closed.
+    """
+
+    def test_ping_succeeds_against_a_reachable_connection(self) -> None:
+        """Load-bearing, not a decorative sanity check: this is what keeps
+        test_ping_raises_after_connection_is_closed below honest. Without
+        this test, deleting or renaming ping() would still pass that one
+        (AttributeError satisfies a bare `pytest.raises(Exception)`); this
+        one would catch it.
+        """
+        s = PgVectorStore(dsn=_TEST_DSN, table_name=_TEST_TABLE, vector_size=_DIM)
+        try:
+            s.ping()  # must not raise
+        finally:
+            s.close()
+
+    def test_ping_raises_after_connection_is_closed(self) -> None:
+        s = PgVectorStore(dsn=_TEST_DSN, table_name=_TEST_TABLE, vector_size=_DIM)
+        s.close()
+        # Deliberately broad: pinning psycopg's specific exception type here
+        # would make this test track that library's internals rather than
+        # the contract this file cares about (raises vs. swallows).
+        with pytest.raises(Exception):  # noqa: B017, PT011 -- psycopg's own exception type
+            s.ping()
+
+    def test_count_swallows_and_returns_zero_after_connection_is_closed(self) -> None:
+        s = PgVectorStore(dsn=_TEST_DSN, table_name=_TEST_TABLE, vector_size=_DIM)
+        s.close()
+        assert s.count() == 0

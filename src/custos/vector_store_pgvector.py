@@ -110,6 +110,14 @@ class PgVectorStore(VectorStore):
         except Exception:
             return 0
 
+    def ping(self) -> None:
+        """Raise if the store is unreachable. Unlike count(), this does NOT
+        swallow the exception -- see QdrantVectorStore.ping() for why that
+        distinction matters to callers like /api/admin/status.
+        """
+        with self._conn.cursor() as cur:
+            cur.execute("SELECT 1")
+
     def query(
         self,
         vector: list[float],

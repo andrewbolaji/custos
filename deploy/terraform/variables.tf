@@ -44,7 +44,7 @@ variable "vpc_cidr" {
 }
 
 variable "enable_egress" {
-  description = "true builds a NAT gateway so the service can reach the public internet, which it needs to call a hosted generation model. false builds no NAT gateway and no default route out of the private subnets, instead relying on VPC endpoints, for an air-gapped deployment. See network.tf for the full cost and connectivity tradeoff."
+  description = "true builds a NAT gateway so the service can reach the public internet, which it needs to call a hosted generation model and to pull the Qdrant sidecar image (see ecs.tf). false builds no NAT gateway and no default route out of the private subnets, instead relying on VPC endpoints, for an air-gapped deployment -- but that path is CURRENTLY BLOCKED at plan time by egress_provider_guard in guard.tf, for every llm_provider, because the Qdrant sidecar cannot be pulled without egress. See network.tf for the full cost and connectivity tradeoff, and deploy/PREREQUISITES.md for what closing this gap would take."
   type        = bool
   default     = true
 }
@@ -62,15 +62,26 @@ variable "container_port" {
 }
 
 variable "task_cpu" {
-  description = "Fargate task CPU units, 1024 units equals 1 vCPU. Must be a value Fargate accepts for the chosen task_memory, see AWS Fargate task size documentation. Raising this increases the hourly Fargate bill."
+  description = "Fargate task CPU units, 1024 units equals 1 vCPU. Must be a value Fargate accepts for the chosen task_memory, see AWS Fargate task size documentation -- unlike task_memory below, this is NOT validated against task_memory here (a cross-variable check belongs in guard.tf's precondition pattern, not a plain validation block, and adding a new guard.tf resource for it would change this module's verified 34-resource default plan count, so it is deliberately left as an operator responsibility for now). An invalid pairing plans and applies cleanly and fails at RegisterTaskDefinition. The task now runs the custos app container and a Qdrant sidecar together (see ecs.tf), so this covers both. Raising this increases the hourly Fargate bill."
   type        = number
-  default     = 512
+  default     = 1024
 }
 
 variable "task_memory" {
-  description = "Fargate task memory in MiB. Must be a value Fargate accepts for the chosen task_cpu. The embedding model and any in-memory index need headroom, so this should not be dropped far below the default without testing."
+  description = "Fargate task memory in MiB. Must be a value Fargate accepts for the chosen task_cpu. The embedding model, any in-memory index, and the Qdrant sidecar (see ecs.tf) all share this task's memory, so this should not be dropped far below the default without testing."
   type        = number
-  default     = 1024
+  default     = 2048
+
+  validation {
+    # ecs.tf reserves 1536 MiB for the custos container and 384 MiB for the
+    # Qdrant sidecar, 1920 MiB total. AWS requires that a task definition's
+    # per-container memoryReservation values sum to no more than the task's
+    # own memory, and rejects RegisterTaskDefinition at apply time
+    # otherwise -- exactly the "fails late, in production" class of bug
+    # guard.tf exists to catch at plan time instead.
+    condition     = var.task_memory >= 2048
+    error_message = "task_memory must be at least 2048 MiB: ecs.tf reserves 1536 MiB for the custos container plus 384 MiB for the Qdrant sidecar (1920 MiB total), and a value below that lets a plan succeed on a task definition that apply will then reject."
+  }
 }
 
 variable "desired_count" {
@@ -91,7 +102,7 @@ variable "log_retention_days" {
 }
 
 variable "llm_provider" {
-  description = "Which backend the application calls for LLM generation. \"anthropic\" (default) calls api.anthropic.com directly and requires enable_egress = true (or a manually provided path out). \"bedrock\" calls Amazon Bedrock over a VPC interface endpoint, works with enable_egress = false, and removes the LLM API key from the deployment entirely (no Secrets Manager secret, no execution-role read permission)."
+  description = "Which backend the application calls for LLM generation. \"anthropic\" (default) calls api.anthropic.com directly and requires enable_egress = true (or a manually provided path out). \"bedrock\" calls Amazon Bedrock over a VPC interface endpoint and removes the LLM API key from the deployment entirely (no Secrets Manager secret, no execution-role read permission). NOTE: enable_egress = false (air-gapped) is currently blocked regardless of llm_provider, by egress_provider_guard in guard.tf -- the Qdrant sidecar in ecs.tf is pulled from Docker Hub, which air-gapped subnets cannot reach."
   type        = string
   default     = "anthropic"
 

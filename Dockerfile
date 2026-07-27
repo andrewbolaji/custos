@@ -57,6 +57,10 @@ ENV CUSTOS_CORPUS_DIR=/app/corpus/output
 USER custos
 EXPOSE 8000
 
+# /api/health now returns HTTP 503 while the index is not ready (readiness,
+# not liveness -- see api.py). urlopen() raises HTTPError on a non-2xx
+# response, so a 503 here correctly fails this check; that is expected
+# while the index is warming, not a bug.
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')" || exit 1
 

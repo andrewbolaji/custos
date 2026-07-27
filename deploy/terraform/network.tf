@@ -5,7 +5,12 @@
 #                          about $0.01/hour each for the interface endpoints.
 # The no-egress path is not a premium option bought for security. It costs the
 # same money, or slightly less, while removing the service's ability to reach
-# the public internet at all.
+# the public internet at all. That said, enable_egress = false is CURRENTLY
+# BLOCKED at plan time for every llm_provider -- see egress_provider_guard in
+# guard.tf and deploy/PREREQUISITES.md -- because the Qdrant sidecar added to
+# ecs.tf is pulled from Docker Hub and needs a route out. The count = 0/1
+# toggles below still exist and describe what this network would look like if
+# that gap is closed; they are not currently reachable in a successful plan.
 
 data "aws_availability_zones" "available" {
   state = "available"

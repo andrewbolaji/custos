@@ -7,15 +7,20 @@ interface and never imports a concrete backend directly.
 
 AdminVectorStore is a small, explicit union of the two concrete backends,
 used only by infra/lifecycle call sites (ingest.py, boot.py, api.py) that
-need recreate_collection()/count() -- operations that are deliberately NOT
-part of the VectorStore ABC (interfaces.py). VectorStore is the retrieval
-contract (upsert/query/delete); clearing a store for idempotent
-re-indexing or polling its row count is an admin concern that only a
-couple of call sites need, and QdrantVectorStore already exposed
-count()/recreate_collection() as plain extra methods beyond the ABC before
-pgvector existed. Widening VectorStore to add them would leak an
-ingest-only concern into the interface every retrieval-path caller depends
-on, so it stays a union of concrete types instead.
+need recreate_collection()/count()/ping() -- operations that are
+deliberately NOT part of the VectorStore ABC (interfaces.py). VectorStore is
+the retrieval contract (upsert/query/delete); clearing a store for
+idempotent re-indexing, polling its row count, or checking live
+reachability is an admin concern that only a couple of call sites need, and
+QdrantVectorStore already exposed count()/recreate_collection() as plain
+extra methods beyond the ABC before pgvector existed. ping() joined them for
+the same reason: count() deliberately swallows every exception and returns
+0 on failure (ensure_index_ready needs 0 to mean "needs reindexing", not
+"unreachable"), so it cannot serve callers -- wait_for_qdrant, api.py's
+_check_store_connected() -- that need to tell those two states apart.
+Widening VectorStore to add any of these would leak an ingest/ops-only
+concern into the interface every retrieval-path caller depends on, so it
+stays a union of concrete types instead.
 """
 
 from __future__ import annotations

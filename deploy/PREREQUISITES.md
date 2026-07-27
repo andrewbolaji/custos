@@ -60,9 +60,10 @@ against your account.
 
 The service needs to call a hosted large language model to generate answers.
 Which model it calls, and whether that call leaves your network at all, is
-now a decision made by two independent Terraform variables together, not one
+a decision made by two independent Terraform variables together, not one
 checkbox: `enable_egress` and `llm_provider`. They combine into four possible
-deployments, three of which work and one of which does not.
+deployments. Right now only the two egress-enabled combinations work; both
+air-gapped combinations are blocked at plan time (see below).
 
 `enable_egress = true`, `llm_provider = "anthropic"` (the default): we create
 a NAT gateway. The ECS tasks, in private subnets, can reach the public
@@ -76,37 +77,39 @@ network rather than to a third party endpoint. Worth choosing over the
 default if you want Bedrock for billing or procurement reasons even though
 you have no air-gap requirement.
 
-`enable_egress = false`, `llm_provider = "bedrock"`: **air-gapped and fully
-functional.** No NAT gateway, no route to the public internet from any
-workload, and the model call reaches Bedrock over a private
-`bedrock-runtime` VPC interface endpoint that never leaves AWS's network.
-This is the combination to choose if your policy requires no direct internet
-path from any workload, full stop. Costs about the same, or slightly less,
-than the NAT path, priced per interface endpoint: four interface endpoints
-(`ecr.api`, `ecr.dkr`, `logs`, `bedrock-runtime`) at roughly $0.01/hour each,
-plus one S3 gateway endpoint at no hourly charge.
+`enable_egress = false`, `llm_provider = "bedrock"`: **currently blocked, not
+just discouraged.** This used to be the air-gapped recommendation: no NAT
+gateway, no route to the public internet from any workload, and the model
+call reaching Bedrock over a private `bedrock-runtime` VPC interface
+endpoint that never leaves AWS's network. It no longer works, because the
+ECS task definition now also runs a Qdrant vector store sidecar (the actual
+RAG backend the app queries), pulled straight from Docker Hub at apply time.
+Air-gapped subnets have no route to Docker Hub, and this module does not
+mirror that image into ECR. A plan-time guard (one of two `precondition`
+blocks on `egress_provider_guard` in `guard.tf`) refuses to build this
+combination until that gap is closed, rather than let the apply succeed and
+the ECS task sit in PENDING forever with a `CannotPullContainerError`,
+discovered in production instead of at plan time.
 
-`enable_egress = false`, `llm_provider = "anthropic"`: **does not work.** The
-private subnets have no route out, there is no VPC endpoint for
-`api.anthropic.com`, and one cannot be created, because AWS PrivateLink
-reaches AWS services and AWS Marketplace partner services, not arbitrary
-third party SaaS. The failure mode here is the nasty kind: the apply
-succeeds, the container starts, the ALB health check passes, and only then
-does every real query fail on a connection timeout, discovered in production
-rather than at plan time. A plan-time guard in the Terraform module now
-refuses to build this combination at all (see the `egress_provider_guard`
-precondition in `guard.tf`), so this failure mode is caught before an apply
-ever runs, not after.
+`enable_egress = false`, `llm_provider = "anthropic"`: **does not work**, for
+an independent reason. The private subnets have no route out, there is no
+VPC endpoint for `api.anthropic.com`, and one cannot be created, because AWS
+PrivateLink reaches AWS services and AWS Marketplace partner services, not
+arbitrary third party SaaS. This combination fails the Docker Hub guard
+above too, and additionally fails `egress_provider_guard`'s other
+precondition, written specifically for this combination.
 
-If air-gapped is your requirement, the combination to ask for is
-`enable_egress = false` with `llm_provider = "bedrock"`, and that
-architectural conversation, which model backend you are actually going to
-run on, needs to happen before deployment, not after.
+**If your policy requires air-gapped, say so before we scope the
+engagement**, not after: as of this module's current state, there is no
+egress-off combination we can stand up. Closing that gap means mirroring
+the Qdrant sidecar image into an ECR repository this module can reach from
+the private subnets, which is follow-up work, not something to discover
+mid-deployment.
 
 **Blocks if missing:** we default to egress enabled with the Anthropic
 provider. If your policy actually requires air-gapped and nobody said so, we
-build the wrong network topology and the wrong model provider, and have to
-rebuild both.
+build the wrong network topology, the wrong model provider, and discover only
+at plan time that no air-gapped path exists yet at all.
 
 ## Generation model credentials
 
