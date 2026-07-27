@@ -64,11 +64,12 @@ from custos.agent_loop import (
     _wrap_tool_output,
 )
 from custos.interfaces import ToolCall, ToolResult
-from custos.llm import ClaudeLLM, PromptParts
+from custos.llm import PromptParts, resolve_response
 
 if TYPE_CHECKING:
     from collections.abc import Generator
 
+    from custos.llm_config import AnyLLM
     from custos.pending_actions import PendingActionStore
     from custos.tool_registry import ToolRegistry
 
@@ -101,7 +102,7 @@ class LangGraphAgentLoop:
 
     def __init__(
         self,
-        llm: ClaudeLLM,
+        llm: AnyLLM,
         registry: ToolRegistry,
         *,
         max_steps: int = DEFAULT_MAX_STEPS,
@@ -513,7 +514,7 @@ class LangGraphAgentLoop:
         assert self._prompt_parts is not None
         if not self._streaming:
             full_text = "\n".join(state["text_parts"])
-            answer = ClaudeLLM.resolve_response(full_text, self._prompt_parts.chunk_lookup)
+            answer = resolve_response(full_text, self._prompt_parts.chunk_lookup)
             self._emit(AgentEvent(kind="text", data={"text": answer.text}))
             self._final_text = answer.text
             self._final_citations = list(answer.citations)
@@ -521,7 +522,7 @@ class LangGraphAgentLoop:
             return {}
 
         full_text = state["accumulated_raw_text"]
-        answer = ClaudeLLM.resolve_response(full_text, self._prompt_parts.chunk_lookup)
+        answer = resolve_response(full_text, self._prompt_parts.chunk_lookup)
         already_streamed = state["streamed_text_joined"]
         if already_streamed.strip() != answer.text.strip():
             self._emit(AgentEvent(kind="text_replace", data={"text": answer.text}))

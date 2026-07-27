@@ -13,7 +13,11 @@
 # Replace PASTE_SECRET_HERE with the real key. That command never touches
 # Terraform, so the key never enters a .tf file, a .tfvars file, or state.
 
+# Skipped entirely in Bedrock mode: Bedrock authenticates via the ECS task
+# role (see ecs.tf), so no LLM credential exists anywhere in that deployment,
+# not in Secrets Manager, not in the task definition, not on disk.
 resource "aws_secretsmanager_secret" "llm_api_key" {
+  count       = var.llm_provider == "bedrock" ? 0 : 1
   name        = "custos/${var.environment}/llm-api-key"
   description = "Anthropic API key for Custos generation model calls. Value is set out of band, see comment above."
 

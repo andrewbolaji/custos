@@ -19,8 +19,8 @@ output "ecs_service_name" {
 }
 
 output "secret_arn" {
-  description = "ARN of the Secrets Manager container the LLM API key must be put into, see secrets.tf for the exact command."
-  value       = aws_secretsmanager_secret.llm_api_key.arn
+  description = "ARN of the Secrets Manager container the LLM API key must be put into, see secrets.tf for the exact command. Null in Bedrock mode: no such secret exists."
+  value       = var.llm_provider == "bedrock" ? null : aws_secretsmanager_secret.llm_api_key[0].arn
 }
 
 output "vpc_id" {

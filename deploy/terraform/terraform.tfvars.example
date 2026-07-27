@@ -14,6 +14,8 @@ vpc_cidr = "10.40.0.0/16" # must not collide with any network this account alrea
 enable_egress = true  # true: service can call a hosted generation model. false: air-gapped, VPC endpoints only.
 alb_internal  = false # true: load balancer reachable only from inside the VPC, for VPN-only access
 
+llm_provider = "anthropic" # "anthropic" (direct API, needs enable_egress = true) or "bedrock" (VPC endpoint, works with enable_egress = false, no LLM credential in the deployment)
+
 container_port = 8000 # must match the port the Dockerfile exposes
 
 task_cpu    = 512  # Fargate CPU units, 1024 = 1 vCPU

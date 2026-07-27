@@ -49,7 +49,8 @@ from custos.embedder import LocalEmbedder
 from custos.ingest import ingest_corpus
 from custos.injection_detector import InjectionDetector
 from custos.interfaces import Chunk
-from custos.llm import ClaudeLLM, get_refusal_text, get_system_prompt
+from custos.llm import build_prompt, get_refusal_text, get_system_prompt
+from custos.llm_config import AnyLLM, get_llm, get_provider
 from custos.pending_actions import PendingActionStore
 from custos.pii import PIIRedactor
 from custos.rate_limiter import RateLimiter
@@ -187,7 +188,7 @@ app.add_middleware(
 _embedder: LocalEmbedder | None = None
 _store: AdminVectorStore | None = None
 _retriever: CustosRetriever | None = None
-_llm: ClaudeLLM | None = None
+_llm: AnyLLM | None = None
 _pending_actions = PendingActionStore()
 _injection_detector = InjectionDetector()
 _rate_limiter = RateLimiter()
@@ -246,16 +247,17 @@ def _get_retriever() -> CustosRetriever:
     return _retriever
 
 
-def _get_llm() -> ClaudeLLM:
+def _get_llm() -> AnyLLM:
+    """Construct the LLM selected by CUSTOS_LLM_PROVIDER. See llm_config.get_llm."""
     global _llm
     if _llm is None:
         api_key = os.environ.get("ANTHROPIC_API_KEY")
-        if not api_key:
+        if get_provider() == "anthropic" and not api_key:
             raise HTTPException(
                 status_code=503,
                 detail="ANTHROPIC_API_KEY not configured. The LLM is unavailable.",
             )
-        _llm = ClaudeLLM(
+        _llm = get_llm(
             api_key=api_key,
             on_api_call=_rate_limiter.record_api_call,
         )
@@ -386,7 +388,7 @@ def _run_agent(
             tool_results=[],
         )
 
-    parts = ClaudeLLM.build_prompt(get_system_prompt(), chunks)
+    parts = build_prompt(get_system_prompt(), chunks)
     registry = _build_registry(user_permissions)
     loop = build_agent_loop(llm=llm, registry=registry)
     return loop.run(parts, query, history=history)
@@ -678,7 +680,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> EventSourc
                 "data": json.dumps({"type": "injection_blocked"}),
             }
 
-        parts = ClaudeLLM.build_prompt(get_system_prompt(), chunks)
+        parts = build_prompt(get_system_prompt(), chunks)
         registry = _build_registry(request.user_permissions)
         loop = build_agent_loop(llm=llm, registry=registry)
         trimmed = _trim_history(request.history)

@@ -203,8 +203,11 @@ resource "aws_vpc_endpoint" "logs" {
   }
 }
 
+# Only needed to read the LLM API key secret, so it is also skipped in
+# Bedrock mode: that mode has no Secrets Manager secret at all (see
+# secrets.tf), so an endpoint to reach it would be dead infrastructure.
 resource "aws_vpc_endpoint" "secretsmanager" {
-  count               = var.enable_egress ? 0 : 1
+  count               = (var.enable_egress == false && var.llm_provider != "bedrock") ? 1 : 0
   vpc_id              = aws_vpc.main.id
   service_name        = "com.amazonaws.${var.region}.secretsmanager"
   vpc_endpoint_type   = "Interface"
@@ -214,6 +217,25 @@ resource "aws_vpc_endpoint" "secretsmanager" {
 
   tags = {
     Name = "custos-${var.environment}-secretsmanager-endpoint"
+  }
+}
+
+# bedrock-runtime is the inference API the application actually calls, not
+# to be confused with the plain "bedrock" endpoint (model listing/management,
+# control plane only). Needed whenever there is no NAT gateway, regardless of
+# llm_provider, so switching llm_provider to "bedrock" later never requires
+# re-planning the network.
+resource "aws_vpc_endpoint" "bedrock_runtime" {
+  count               = var.enable_egress ? 0 : 1
+  vpc_id              = aws_vpc.main.id
+  service_name        = "com.amazonaws.${var.region}.bedrock-runtime"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+  security_group_ids  = [aws_security_group.vpc_endpoints[0].id]
+  private_dns_enabled = true
+
+  tags = {
+    Name = "custos-${var.environment}-bedrock-runtime-endpoint"
   }
 }
 

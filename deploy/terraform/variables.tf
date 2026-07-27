@@ -89,3 +89,14 @@ variable "log_retention_days" {
   type        = number
   default     = 7
 }
+
+variable "llm_provider" {
+  description = "Which backend the application calls for LLM generation. \"anthropic\" (default) calls api.anthropic.com directly and requires enable_egress = true (or a manually provided path out). \"bedrock\" calls Amazon Bedrock over a VPC interface endpoint, works with enable_egress = false, and removes the LLM API key from the deployment entirely (no Secrets Manager secret, no execution-role read permission)."
+  type        = string
+  default     = "anthropic"
+
+  validation {
+    condition     = contains(["anthropic", "bedrock"], var.llm_provider)
+    error_message = "llm_provider must be either \"anthropic\" or \"bedrock\"."
+  }
+}
