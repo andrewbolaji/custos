@@ -55,13 +55,14 @@ evals/results/
 .claude/settings.local.json
 
 # Terraform. State holds resource IDs and, often, plaintext attribute values,
-# so it must never be committed. Lock files and plan caches are local/machine
-# specific too, and real tfvars belong to whoever runs the deploy, not the repo.
+# so it must never be committed. Plan caches are machine specific, and a real
+# tfvars belongs to whoever runs the deploy, not to the repo. The provider lock
+# file IS committed on purpose: it pins the exact provider versions so every
+# operator resolves the same ones.
 *.tfstate
 *.tfstate.*
 *.tfstate.backup
 .terraform/
-.terraform.lock.hcl
 *.tfvars
 !*.tfvars.example
 crash.log
