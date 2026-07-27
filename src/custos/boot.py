@@ -47,7 +47,15 @@ def wait_for_qdrant(
     while True:
         attempt += 1
         try:
-            store.count()
+            # store.ping(), not store.count(): both concrete backends'
+            # count() swallows every exception and returns 0 on failure (by
+            # design, ensure_index_ready needs 0 to mean "needs
+            # reindexing"), which means it never raises here regardless of
+            # whether the store is actually reachable -- this loop would
+            # always report success on the first attempt and the retry
+            # logic below would be dead code. ping() raises instead of
+            # swallowing, which is what an actual "is it up yet" poll needs.
+            store.ping()
             logger.info("Vector store reachable after %d attempt(s)", attempt)
             return True
         except Exception as exc:

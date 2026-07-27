@@ -7,6 +7,7 @@ request/response shapes, not the full pipeline).
 
 from __future__ import annotations
 
+import time
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
@@ -29,8 +30,6 @@ class TestHealthEndpoint:
             api_module._index_ready = original
 
     def test_health_returns_degraded_when_index_not_ready(self) -> None:
-        import time
-
         original = api_module._index_ready
         original_recheck = api_module._last_recheck
         try:
@@ -38,11 +37,135 @@ class TestHealthEndpoint:
             # Suppress self-heal re-check by pretending one just happened
             api_module._last_recheck = time.monotonic()
             response = client.get("/api/health")
-            assert response.status_code == 200
+            assert response.status_code == 503
             assert response.json() == {"status": "degraded"}
         finally:
             api_module._index_ready = original
             api_module._last_recheck = original_recheck
+
+    def test_openapi_documents_503_and_200_responses(self) -> None:
+        """The responses= metadata on /api/health should actually show up
+        in the generated OpenAPI schema, not just exist as dead documentation.
+
+        FastAPI emits a bare "200" entry for any GET route regardless of
+        this metadata, so asserting "200" is present alone would pass even
+        if _HEALTH_RESPONSES were deleted -- assert on content that can only
+        come from _HEALTH_RESPONSES specifically.
+        """
+        schema = client.get("/openapi.json").json()
+        responses = schema["paths"]["/api/health"]["get"]["responses"]
+        assert responses["200"]["description"] == "Index ready."
+        assert responses["503"]["description"] == "Index not ready."
+        ok_example = responses["200"]["content"]["application/json"]["example"]
+        degraded_example = responses["503"]["content"]["application/json"]["example"]
+        assert ok_example == {"status": "ok"}
+        assert degraded_example == {"status": "degraded"}
+
+
+class TestAdminStatusEndpoint:
+    def test_admin_status_stays_200_when_index_not_ready(self) -> None:
+        """Deliberate asymmetry: /api/health is a probe (503 while degraded),
+        /api/admin/status is a diagnostic that must stay readable precisely
+        when the system is degraded, so it always returns 200 once
+        authenticated.
+        """
+        original_ready = api_module._index_ready
+        original_recheck = api_module._last_recheck
+        original_token = api_module._ADMIN_TOKEN
+        try:
+            api_module._index_ready = False
+            api_module._last_recheck = time.monotonic()
+            api_module._ADMIN_TOKEN = "test-token"  # noqa: S105 -- test fixture, not a real credential
+            response = client.get(
+                "/api/admin/status",
+                headers={"Authorization": "Bearer test-token"},
+            )
+            assert response.status_code == 200
+            assert response.json()["status"] == "degraded"
+            assert response.json()["index_ready"] is False
+        finally:
+            api_module._index_ready = original_ready
+            api_module._last_recheck = original_recheck
+            api_module._ADMIN_TOKEN = original_token
+
+    def test_qdrant_connected_is_false_after_boot_when_store_is_dead(self) -> None:
+        """qdrant_connected must be a live probe, not `_store is not None`.
+
+        A task can boot successfully (index_ready stays True -- nothing in
+        the request path resets it) and then lose its vector store later.
+        qdrant_connected has to catch that even though index_ready cannot.
+        The double's `ping()` raises -- both real VectorStore backends'
+        `count()` swallow every exception and return 0 instead of raising
+        (see vector_store.py / vector_store_pgvector.py), so a double built
+        on `count.side_effect = ConnectionError(...)` would test a contract
+        no real store has; `ping()` is the method that actually raises.
+        """
+        original_ready = api_module._index_ready
+        original_token = api_module._ADMIN_TOKEN
+        try:
+            api_module._index_ready = True
+            api_module._ADMIN_TOKEN = "test-token"  # noqa: S105 -- test fixture, not a real credential
+            dead_store = MagicMock()
+            dead_store.ping.side_effect = ConnectionError("refused")
+            with patch.object(api_module, "_store", dead_store):
+                response = client.get(
+                    "/api/admin/status",
+                    headers={"Authorization": "Bearer test-token"},
+                )
+            assert response.status_code == 200
+            assert response.json()["index_ready"] is True
+            assert response.json()["qdrant_connected"] is False
+        finally:
+            api_module._index_ready = original_ready
+            api_module._ADMIN_TOKEN = original_token
+
+    def test_qdrant_connected_is_true_when_store_responds(self) -> None:
+        original_token = api_module._ADMIN_TOKEN
+        try:
+            api_module._ADMIN_TOKEN = "test-token"  # noqa: S105 -- test fixture, not a real credential
+            live_store = MagicMock()
+            live_store.ping.return_value = None
+            with patch.object(api_module, "_store", live_store):
+                response = client.get(
+                    "/api/admin/status",
+                    headers={"Authorization": "Bearer test-token"},
+                )
+            assert response.json()["qdrant_connected"] is True
+        finally:
+            api_module._ADMIN_TOKEN = original_token
+
+    def test_qdrant_connected_ignores_count_and_uses_ping(self) -> None:
+        """A store whose count() swallows an outage and returns 0 (the real
+        contract -- see vector_store.py) must still be reported disconnected
+        if ping() raises, and connected if ping() succeeds even though the
+        collection is empty. Guards against reintroducing a count()-based
+        probe that can't tell "unreachable" from "reachable but empty".
+        """
+        original_token = api_module._ADMIN_TOKEN
+        try:
+            api_module._ADMIN_TOKEN = "test-token"  # noqa: S105 -- test fixture, not a real credential
+
+            unreachable_but_zero = MagicMock()
+            unreachable_but_zero.count.return_value = 0  # count()'s real swallow contract
+            unreachable_but_zero.ping.side_effect = ConnectionError("refused")
+            with patch.object(api_module, "_store", unreachable_but_zero):
+                response = client.get(
+                    "/api/admin/status",
+                    headers={"Authorization": "Bearer test-token"},
+                )
+            assert response.json()["qdrant_connected"] is False
+
+            reachable_but_empty = MagicMock()
+            reachable_but_empty.count.return_value = 0  # genuinely empty collection
+            reachable_but_empty.ping.return_value = None
+            with patch.object(api_module, "_store", reachable_but_empty):
+                response = client.get(
+                    "/api/admin/status",
+                    headers={"Authorization": "Bearer test-token"},
+                )
+            assert response.json()["qdrant_connected"] is True
+        finally:
+            api_module._ADMIN_TOKEN = original_token
 
 
 class TestReadinessGate:

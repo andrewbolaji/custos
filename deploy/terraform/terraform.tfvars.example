@@ -11,15 +11,15 @@ owner_tag   = "aintellect" # who this AWS bill traces back to
 
 vpc_cidr = "10.40.0.0/16" # must not collide with any network this account already connects to
 
-enable_egress = true  # true: service can call a hosted generation model. false: air-gapped, VPC endpoints only.
+enable_egress = true  # true: service can call a hosted generation model AND pull the Qdrant sidecar image. false (air-gapped) is currently blocked at plan time -- see egress_provider_guard in guard.tf.
 alb_internal  = false # true: load balancer reachable only from inside the VPC, for VPN-only access
 
-llm_provider = "anthropic" # "anthropic" (direct API, needs enable_egress = true) or "bedrock" (VPC endpoint, works with enable_egress = false, no LLM credential in the deployment)
+llm_provider = "anthropic" # "anthropic" (direct API, needs enable_egress = true) or "bedrock" (VPC endpoint, no LLM credential in the deployment). Either way enable_egress must currently be true; see guard.tf.
 
 container_port = 8000 # must match the port the Dockerfile exposes
 
-task_cpu    = 512  # Fargate CPU units, 1024 = 1 vCPU
-task_memory = 1024 # Fargate memory in MiB
+task_cpu    = 1024 # Fargate CPU units, 1024 = 1 vCPU. Shared by the custos app container and the Qdrant sidecar (see ecs.tf).
+task_memory = 2048 # Fargate memory in MiB. Shared by the custos app container and the Qdrant sidecar (see ecs.tf).
 
 desired_count = 1 # number of running task instances
 

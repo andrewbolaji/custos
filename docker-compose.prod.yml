@@ -29,6 +29,13 @@ services:
     restart: unless-stopped
     volumes:
       - app_data:/app/data
+    # /api/health returns HTTP 503 (readiness, not liveness) if the process
+    # comes up but never finishes indexing -- urlopen() raises on 503, so
+    # this check reports "unhealthy" in that case. During the normal boot
+    # window itself uvicorn hasn't bound its port yet (the vector-store wait
+    # and reindex run inside FastAPI's startup lifespan, before bind), so
+    # urlopen() gets connection-refused, not 503, until boot completes;
+    # start_period covers that window either way.
     healthcheck:
       test: ["CMD", "python", "-c",
         "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]

@@ -98,6 +98,17 @@ class QdrantVectorStore(VectorStore):
         except Exception:
             return 0
 
+    def ping(self) -> None:
+        """Raise if the store is unreachable. Unlike count(), this does NOT
+        swallow the exception: count()'s 0-on-any-error contract is
+        deliberate (ensure_index_ready treats 0 as "needs reindexing", not
+        as "unreachable"), which makes it useless for a caller that needs
+        to tell those two cases apart -- e.g. /api/admin/status's
+        qdrant_connected field. Callers that want a boolean should catch
+        the exception themselves.
+        """
+        self._client.get_collections()
+
     def query(
         self,
         vector: list[float],

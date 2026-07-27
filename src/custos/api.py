@@ -1,7 +1,7 @@
 """FastAPI service for Custos.
 
 Endpoints:
-    GET  /api/health             Liveness check
+    GET  /api/health             Readiness check (503 while the index is not ready)
     POST /api/ingest             Trigger corpus indexing (admin action)
     POST /api/chat               Query the assistant (synchronous)
     POST /api/chat/stream        Query the assistant (streaming SSE)
@@ -30,6 +30,7 @@ import json
 import logging
 import os
 import secrets
+import threading
 import time
 from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager
@@ -39,6 +40,7 @@ from typing import Any
 import anthropic
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
@@ -198,6 +200,17 @@ _index_expected = 0
 _last_recheck: float = 0.0
 HEALTH_RECHECK_INTERVAL = 30.0  # seconds between re-verification attempts
 
+# Guards the self-heal recheck below. health() is a sync def, so FastAPI
+# runs each call in a threadpool worker; an ALB has one health-checker per
+# subnet (two here, see alb.tf), so two /api/health probes can land at
+# nearly the same moment. Without this lock, both could pass the
+# check-then-set on _last_recheck and both call ensure_index_ready ->
+# ingest_corpus concurrently -- redundant work against the same collection
+# exactly when the task is already struggling. A non-blocking acquire means
+# a probe that loses the race just reports the current (still degraded)
+# status instead of piling on.
+_self_heal_lock = threading.Lock()
+
 # Admin token: must be set in the environment. Never in the repo.
 _ADMIN_TOKEN = os.environ.get("CUSTOS_ADMIN_TOKEN", "")
 
@@ -238,6 +251,31 @@ def _get_store() -> AdminVectorStore:
     if _store is None:
         _store = get_vector_store(vector_size=_get_embedder().dimension)
     return _store
+
+
+def _check_store_connected() -> bool:
+    """Live connectivity probe for /api/admin/status's "qdrant_connected" field.
+
+    `_store is not None` is NOT a connectivity check: the client handle is
+    constructed once at boot (or on first self-heal success) and never torn
+    down, so it stays truthy even if the store dies underneath it later --
+    the exact post-boot outage this admin field exists to surface.
+
+    Deliberately calls .ping(), not .count(): both concrete VectorStore
+    backends' count() swallows every exception and returns 0 on failure
+    (by design -- ensure_index_ready needs 0 to mean "needs reindexing"),
+    so count() can never distinguish "unreachable" from "reachable but
+    empty" and would make this field just as inert as `_store is not None`
+    was. ping() raises instead of swallowing, specifically for callers like
+    this one that need the real reachability signal.
+    """
+    if _store is None:
+        return False
+    try:
+        _store.ping()
+    except Exception:
+        return False
+    return True
 
 
 def _get_retriever() -> CustosRetriever:
@@ -499,9 +537,27 @@ class IngestResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-@app.get("/api/health")
-def health() -> dict[str, str]:
-    """Public health check. Returns status only, no internal details.
+_HEALTH_RESPONSES: dict[int | str, dict[str, Any]] = {
+    200: {
+        "description": "Index ready.",
+        "content": {"application/json": {"example": {"status": "ok"}}},
+    },
+    503: {
+        "description": "Index not ready.",
+        "content": {"application/json": {"example": {"status": "degraded"}}},
+    },
+}
+
+
+@app.get("/api/health", responses=_HEALTH_RESPONSES)
+def health() -> JSONResponse:
+    """Readiness check used by the ALB target group. Returns status only,
+    no internal details.
+
+    Returns HTTP 503 while the index is not ready and 200 once it is, so
+    the ALB (matcher = "200" in alb.tf) never routes traffic to a task
+    that cannot answer a real request. The response body is unchanged
+    either way -- only the status code carries the readiness signal.
 
     Self-healing: if currently degraded, attempts a re-verification
     at most once every HEALTH_RECHECK_INTERVAL seconds. If the vector
@@ -509,32 +565,40 @@ def health() -> dict[str, str]:
     """
     global _index_ready, _index_chunks, _index_expected, _last_recheck  # noqa: PLW0603
 
-    if not _index_ready:
-        now = time.monotonic()
-        if now - _last_recheck >= HEALTH_RECHECK_INTERVAL:
-            _last_recheck = now
-            try:
-                store = _get_store()
-                embedder = _get_embedder()
-                _index_chunks, _index_expected = ensure_index_ready(embedder, store)
-                if _index_chunks == _index_expected and _index_chunks > 0:
-                    _index_ready = True
-                    logger.info(
-                        "Self-heal: index recovered, %d/%d chunks",
-                        _index_chunks,
-                        _index_expected,
-                    )
-            except Exception:
-                logger.debug("Self-heal: vector store still unreachable")
+    if not _index_ready and _self_heal_lock.acquire(blocking=False):
+        try:
+            now = time.monotonic()
+            if now - _last_recheck >= HEALTH_RECHECK_INTERVAL:
+                _last_recheck = now
+                try:
+                    store = _get_store()
+                    embedder = _get_embedder()
+                    _index_chunks, _index_expected = ensure_index_ready(embedder, store)
+                    if _index_chunks == _index_expected and _index_chunks > 0:
+                        _index_ready = True
+                        logger.info(
+                            "Self-heal: index recovered, %d/%d chunks",
+                            _index_chunks,
+                            _index_expected,
+                        )
+                except Exception:
+                    logger.debug("Self-heal: vector store still unreachable")
+        finally:
+            _self_heal_lock.release()
 
-    return {"status": "ok" if _index_ready else "degraded"}
+    if _index_ready:
+        return JSONResponse(status_code=200, content={"status": "ok"})
+    return JSONResponse(status_code=503, content={"status": "degraded"})
 
 
 @app.get("/api/admin/status")
 def admin_status(request: Request) -> dict[str, Any]:
     """Admin status endpoint. Returns 404 on wrong/missing token
-    (does not leak whether the route exists). Rate-limited like
-    all other routes.
+    (does not leak whether the route exists). Always returns 200 once
+    authenticated, degraded or not -- it is a diagnostic, not a probe,
+    so it must stay readable exactly when the system is degraded. Unlike
+    /api/chat and /api/chat/stream, this route is not subject to
+    _rate_limiter.
     """
     auth = request.headers.get("authorization", "")
     expected = f"Bearer {_ADMIN_TOKEN}"
@@ -547,7 +611,7 @@ def admin_status(request: Request) -> dict[str, Any]:
         "index_ready": _index_ready,
         "chunks": _index_chunks,
         "expected_chunks": _index_expected,
-        "qdrant_connected": _store is not None,
+        "qdrant_connected": _check_store_connected(),
         "model": os.environ.get("CUSTOS_MODEL", "claude-sonnet-4-6"),
         **rate_status,
     }

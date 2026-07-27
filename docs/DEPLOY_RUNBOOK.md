@@ -134,16 +134,41 @@ sudo systemctl restart caddy
 
 ## 9. Verify health
 
+`/api/health` is a readiness check, not a liveness check: it returns HTTP
+503 with `{"status":"degraded"}` if the process comes up but never finishes
+indexing (Qdrant unreachable at boot, or the index never reaches the
+expected chunk count), and HTTP 200 with `{"status":"ok"}` once it's ready.
+Right at the start of a restart the process may not even be listening yet,
+in which case `curl` fails to connect rather than returning 503. Seeing 503
+right after a restart is expected, not a failed deploy; give it a minute and
+retry before assuming something is wrong.
+
+**This does not cover a Qdrant outage that happens *after* a successful
+boot.** `_index_ready` (`src/custos/api.py`) is only ever set back to
+`False` inside FastAPI's startup lifespan -- nothing in the request path
+resets it, so once a task has reported `ok` once, `/api/health` reports
+`ok` for the rest of that process's life even if Qdrant dies underneath it
+later. A post-boot Qdrant failure instead shows up as `/api/chat` and
+`/api/chat/stream` returning 503 per-request (`_retrieve_and_scan` catches
+the connection error and raises), not as `/api/health` flipping. If you
+need to catch that case, monitor `/api/admin/status`'s `qdrant_connected`
+field or alert on chat-endpoint error rate -- don't rely on `/api/health`
+for it.
+
 ```bash
 # From the VM (internal):
-curl http://127.0.0.1:8000/api/health
-# Expected: {"status":"ok"}
+curl -i http://127.0.0.1:8000/api/health
+# Expected once ready: HTTP/1.1 200 OK, {"status":"ok"}
+# Expected if boot never finishes indexing: HTTP/1.1 503, {"status":"degraded"} -- retry after ~1 minute
+# NOT expected: this endpoint does not flip back to 503 for a Qdrant outage after a successful boot -- see above
 
 # From outside (through Caddy + TLS):
-curl https://api.custos.andrewbolaji.com/api/health
-# Expected: {"status":"ok"}
+curl -i https://api.custos.andrewbolaji.com/api/health
+# Same 200/503 behavior as above
 
-# Admin endpoint:
+# Admin endpoint: always 200 once authenticated, degraded or not -- it's a
+# diagnostic, not a probe, so it stays readable exactly when you need it.
+# Check "qdrant_connected" here for a post-boot outage /api/health won't show.
 curl -H "Authorization: Bearer PASTE_SECRET_HERE" \
   https://api.custos.andrewbolaji.com/api/admin/status
 ```
@@ -167,7 +192,13 @@ Pages creates the DNS records for these automatically.
 ## 11. Set up monitoring
 
 1. **UptimeRobot** (free): monitor `https://api.custos.andrewbolaji.com/api/health`
-   every 5 minutes. Alert on downtime.
+   every 5 minutes. Alert on downtime. A restart can briefly return 503 while
+   the index rebuilds (see step 9); either configure enough
+   consecutive-failure tolerance to ride out that window, or accept that a
+   restart triggers a brief, expected alert. Remember this monitor cannot see
+   a Qdrant outage that happens after a successful boot (step 9 explains
+   why) -- it is not a substitute for watching `/api/admin/status` or chat
+   error rates if that failure mode matters to you.
 
 2. **Budget alert** (cron on the VM):
 
