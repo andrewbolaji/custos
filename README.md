@@ -134,6 +134,14 @@ A byte-reproducible set of documents for **Meridian Home Services**, a fictional
 
 All PII is synthetic and uses reserved/invalid ranges. See `corpus/output/manifest.yaml`.
 
+## Proof-of-value demo kit
+
+A separate kit for showing this to a prospective buyer: a 16-document
+corpus for a second fictional company with three access personas, a
+one-command `make demo` bring-up (measured well under three minutes), a
+30-minute demo script, and a security questionnaire answered against this
+repository's actual code. Start at `demo/README.md`.
+
 ## Project docs
 
 | Document | What it covers |
@@ -146,6 +154,8 @@ All PII is synthetic and uses reserved/invalid ranges. See `corpus/output/manife
 | `docs/DECISIONS.md` | Running log of decisions and standing rules |
 | `docs/benchmarks/vector-backends.md` | Measured latency/recall for Qdrant vs. pgvector |
 | `docs/benchmarks/agent-runtimes.md` | Measured latency/token overhead for the native vs. LangGraph agent loop |
+| `docs/SECURITY_QUESTIONNAIRE.md` | Vendor security review, answered against the code, with a real limitations section |
+| `demo/DEMO_SCRIPT.md` | 30-minute walkthrough script for the proof-of-value demo kit |
 
 ## Phases
 

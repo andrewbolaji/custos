@@ -54,6 +54,9 @@ htmlcov/
 evals/results/
 .claude/settings.local.json
 
+# make demo's background process state (PIDs, logs) -- regenerated every run
+.demo/
+
 # Terraform. State holds resource IDs and, often, plaintext attribute values,
 # so it must never be committed. Plan caches are machine specific, and a real
 # tfvars belongs to whoever runs the deploy, not to the repo. The provider lock
