@@ -3,6 +3,10 @@
 .env.local
 .env.*.local
 
+# Live runtime state (rate limiter counters + accrued cost estimate),
+# written by src/custos/rate_limiter.py on every request. Not source.
+data/counters.json
+
 # Personal methodology and cross-project notes.
 # These are Andrew's working process, not the product.
 # They must never enter this repository.
