@@ -2,15 +2,42 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
+import pytest
+
+import custos.rate_limiter as rate_limiter_module
 from custos.rate_limiter import RateLimiter
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 
 class TestRateLimiter:
+    @staticmethod
+    @pytest.fixture(autouse=True, scope="class")
+    def _restore_rate_limiter_module() -> Generator[None]:
+        """Undo `_make_limiter`'s `importlib.reload` once this class is done.
+
+        `patch.dict` restores `os.environ` when its `with` block exits, but
+        it has no idea a module was reloaded inside that block and no way to
+        put the module back. The reload happens while the fake environment
+        is in place, so the module-level constants (RATE_PER_MIN, DAILY_CAP,
+        etc.) stay bound to the test values -- RATE_PER_MIN 2 instead of 8,
+        DAILY_CAP 5 instead of 150 -- for the rest of the pytest process
+        unless something reloads the module again with the real environment
+        in place. By fixture teardown time, `os.environ` is already back to
+        real values (each `_make_limiter` call's own `patch.dict` already
+        exited), so this reload picks up the real defaults.
+        """
+        yield
+        importlib.reload(rate_limiter_module)
+
     def _make_limiter(self, tmp: Path, **env_overrides: str) -> RateLimiter:
         """Create a rate limiter with a temp data dir."""
         defaults = {
