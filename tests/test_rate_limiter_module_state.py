@@ -14,6 +14,8 @@ here.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import custos.rate_limiter as rate_limiter_module
 
 
@@ -23,3 +25,17 @@ def test_real_defaults_survive_rate_limiter_tests() -> None:
     assert rate_limiter_module.DAILY_CAP == 150
     assert rate_limiter_module.MONTHLY_CAP == 4000
     assert rate_limiter_module.MAX_QUERY_LEN == 500
+
+
+def test_data_dir_is_not_the_repository_data_dir() -> None:
+    """The suite must never resolve to the application's own data/ dir.
+
+    tests/conftest.py sets CUSTOS_DATA_DIR (before custos.rate_limiter is
+    first imported) so DATA_DIR binds to a throwaway temp directory instead
+    of the repository's data/ directory. If that stops working -- the
+    conftest is deleted, turned into a fixture, or runs too late -- this
+    is the test that catches it before a test run mutates real app state
+    on disk again.
+    """
+    repo_data_dir = Path(__file__).resolve().parent.parent / "data"
+    assert rate_limiter_module.DATA_DIR.resolve() != repo_data_dir.resolve()
