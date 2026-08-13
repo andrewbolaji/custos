@@ -32,7 +32,7 @@ Each finding states what the eval actually asserts, not more:
 
 **Control:** Structural prompt separation (`build_prompt()`) + heuristic injection detection (`InjectionDetector`). Matched spans replaced with `[injected instruction removed]` at the span level; source documents never modified.
 
-**Eval:** `injection.py`, 11/11 PASS (7 structural + 3 detector + 1 clean corpus).
+**Eval:** `injection.py`, 13/13 PASS with Qdrant available (7 structural + 3 seeded-detector + 2 full-corpus precision/recall + 1 real retrieval-path case).
 
 **Status:** STRUCTURED (prompt separation) + ENFORCED (detector catches and sanitizes). Impact is further mitigated by T6 (RED-TEAMED) and T4 (ENFORCED).
 

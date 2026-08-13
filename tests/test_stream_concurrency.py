@@ -1,84 +1,14 @@
-"""Regression test: two concurrent /api/chat/stream requests must be served
-concurrently, not serialized behind a blocked event loop.
+"""Regression test for concurrent /api/chat/stream requests.
 
-BUG (found during the cancel-mid-stream work, tracked and fixed here):
-chat_stream's event_generator is `async def` but drove AgentLoop.run_streaming
--- a plain SYNCHRONOUS generator wrapping the Anthropic SDK's sync streaming
-client -- with a bare `for event in stream_iter:`. Every blocking read inside
-that generator (the Anthropic HTTP read, the embedding call, the vector store
-query, tool execution, synchronous disk logging) ran directly on the asyncio
-event loop thread. A second concurrent request's ASGI task could only run
-during the rare checkpoints the handler happens to await (e.g.
-`is_disconnected()`), so its own blocking work still competed for the same
-single thread as the first request's -- both requests together took
-roughly as long as the two run back to back, not as long as the slower one
-alone.
+The provider stream is synchronous and blocking, so the async API bridge must
+advance it in a worker thread. Answer text is now held until complete-response
+redaction, but internal stream_progress events still return control after each
+provider chunk. Those checkpoints preserve disconnect checks and prevent two
+requests from serializing on the event-loop thread.
 
-This test does not touch a real LLM, embedder, or vector store. It mocks
-`_get_llm`, `_retrieve_permitted_chunks`, and `_build_registry` so it
-exercises exactly one thing: whether chat_stream's SSE bridging lets two
-independent streams make genuine concurrent progress on a single asyncio
-event loop (the same execution model `make serve` uses in production -- a
-single uvicorn worker). The fake Anthropic stream sleeps between tokens
-with `time.sleep` (a real blocking call, not `asyncio.sleep`) because that
-is what actually reproduces the bug: an `asyncio.sleep` inside the fake
-would yield control back to the loop on its own and mask a real
-event-loop stall. It emits enough tokens to cross the agent loop's 64-char
-streaming guard buffer many times over, so each request produces ~18
-separate SSE chunks (not one lump at the end) -- enough data points to
-measure each stream's own steady-state throughput, not just its total
-duration.
-
-Deliberately bypasses httpx.ASGITransport. ASGITransport's
-handle_async_request awaits the ENTIRE `app(scope, receive, send)` call to
-completion, collecting every response chunk into a list, before it ever
-constructs a Response for its caller -- there is no way to observe
-per-chunk arrival time through it (verified: a spike using it showed both
-requests' first AND last chunk landing at the same instant, because the
-whole SSE body arrives as one already-joined blob only after the app
-finishes). So this test drives the ASGI callable directly with a minimal
-hand-rolled receive/send pair, timestamping each `http.response.body` the
-app sends in real time -- the same signal a real socket would give a real
-HTTP client.
-
-Why total wall-clock, not raw range-overlap, is the assertion that
-actually discriminates: a spike measurement against the pre-fix code
-showed request B's chunk range DOES overlap request A's even though
-they're serialized -- the one `await is_disconnected()` checkpoint per
-event is enough for asyncio to swap tasks back and forth, so the *chunks*
-interleave in arrival order even while the *work* stays fully serialized
-(one request's blocking sleep still fully occupies the sole thread while
-it runs; only which request is currently occupying it alternates). What
-does NOT survive that swapping is throughput: pre-fix, each stream's own
-median gap between consecutive chunks comes out close to DOUBLE the
-configured per-token delay, because the two requests are still taking
-turns on one thread. Post-fix, each stream's own median gap matches the
-configured delay almost exactly, because the other request's blocking
-work runs on its own thread and no longer competes. That is what
-assertion (a) below actually measures.
-
---- MEASURED BEFORE NUMBERS (broken code, api.py pre-fix, 3 runs) ---
-Run 1: total=0.944s  median_gap_a=0.047s  median_gap_b=0.046s
-Run 2: total=0.991s  median_gap_a=0.049s  median_gap_b=0.048s
-Run 3: total=0.978s  median_gap_a=0.048s  median_gap_b=0.048s
-Configured per-token delay: 0.02s. Each stream's own median gap is ~2.3-2.45x
-the configured delay (both requests sharing one thread), and total
-wall-clock (~0.94-0.99s) is close to 2x the ~0.4s a single request takes
-alone -- the serialized-behind-one-request signature the bug report
-predicted. (Measured by temporarily reverting src/custos/api.py to the
-pre-fix version via `git stash` and re-running this same test file
-unmodified.)
-
---- MEASURED AFTER NUMBERS (fixed code, api.py post-fix, 3 runs) ---
-Run 1: total=0.489s  median_gap_a=0.024s  median_gap_b=0.024s
-Run 2: total=0.510s  median_gap_a=0.025s  median_gap_b=0.025s
-Run 3: total=0.490s  median_gap_a=0.025s  median_gap_b=0.024s
-Each stream's own median gap now matches the configured 0.02s delay much
-more closely (~1.2-1.25x, down from ~2.3-2.45x) -- the other request's
-work is no longer stealing this one's turn -- and total wall-clock
-(~0.49-0.51s) is close to what ONE request takes alone (~0.4s + fixed
-overhead), not the ~0.94-0.99s two serialized requests took before the
-fix.
+The fake stream uses time.sleep to reproduce a blocking network read. Two
+20-chunk requests at 0.02 seconds per chunk should finish near one request's
+0.4-second duration, not the roughly 0.8 seconds expected if serialized.
 """
 
 from __future__ import annotations
@@ -86,7 +16,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import statistics
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -100,10 +29,6 @@ from custos.api import app
 from custos.interfaces import Chunk
 from custos.tool_registry import ToolRegistry
 
-# 20 tokens of 15 chars (300 chars total) comfortably crosses the agent
-# loop's 64-char guard buffer many times over, so each request emits ~18
-# separate SSE chunks instead of one lump at the very end -- enough data
-# points to measure steady-state throughput, not just start/end time.
 _TOKENS = ["0123456789ABCDE" for _ in range(20)]
 _DELAY_SECONDS = 0.02  # per-token simulated blocking network read
 
@@ -292,14 +217,6 @@ async def _fire_two_concurrent_requests() -> tuple[list[float], list[float], flo
     return timestamps_a, timestamps_b, total_wall_clock
 
 
-def _median_steady_state_gap(timestamps: list[float]) -> float:
-    """Median gap between consecutive chunks, i.e. this stream's own
-    steady-state throughput, independent of when it happened to start.
-    """
-    gaps = [b - a for a, b in zip(timestamps, timestamps[1:], strict=False)]
-    return statistics.median(gaps)
-
-
 @pytest.mark.skipif(
     os.environ.get("CUSTOS_VECTOR_BACKEND", "qdrant") != "qdrant"
     or os.environ.get("CUSTOS_AGENT_RUNTIME", "native") != "native",
@@ -321,9 +238,8 @@ def test_two_concurrent_streams_interleave() -> None:
     progress, not take turns on one blocked thread.
 
     Fails against the pre-fix code: see the module docstring for the
-    actual measured before/after numbers and why total wall-clock and
-    per-stream throughput -- not raw chunk-range overlap -- are the
-    assertions that actually discriminate serialized from concurrent.
+    total wall-clock evidence and why a blocking fake stream discriminates
+    serialized from concurrent execution.
     """
     # sse_starlette's AppStatus.should_exit_event is a process-global
     # anyio.Event, lazily bound to whichever event loop first triggers
@@ -352,32 +268,11 @@ def test_two_concurrent_streams_interleave() -> None:
             AppStatus.should_exit_event = None
             AppStatus.should_exit = False
 
-    assert len(timestamps_a) >= 10, f"Request A got too few chunks: {timestamps_a}"
-    assert len(timestamps_b) >= 10, f"Request B got too few chunks: {timestamps_b}"
+    # Each response still emits status, answer, and done SSE frames. Internal
+    # progress events are deliberately not exposed to the client.
+    assert len(timestamps_a) >= 3, f"Request A got too few chunks: {timestamps_a}"
+    assert len(timestamps_b) >= 3, f"Request B got too few chunks: {timestamps_b}"
 
-    # (a) Each stream's own steady-state throughput (median gap between
-    # its consecutive chunks) must be close to the configured per-token
-    # delay. If the two requests are still taking turns on one blocked
-    # thread, each one's own gap comes out close to DOUBLE the configured
-    # delay (see module docstring for the measured before/after ratios).
-    median_gap_a = _median_steady_state_gap(timestamps_a)
-    median_gap_b = _median_steady_state_gap(timestamps_b)
-    max_undegraded_gap = _DELAY_SECONDS * 1.6
-    assert median_gap_a < max_undegraded_gap, (
-        f"Request A's median inter-chunk gap ({median_gap_a:.3f}s) is far "
-        f"above the configured per-token delay ({_DELAY_SECONDS}s): it "
-        f"looks like request A is taking turns with request B on one "
-        f"blocked thread instead of progressing on its own."
-    )
-    assert median_gap_b < max_undegraded_gap, (
-        f"Request B's median inter-chunk gap ({median_gap_b:.3f}s) is far "
-        f"above the configured per-token delay ({_DELAY_SECONDS}s): it "
-        f"looks like request B is taking turns with request A on one "
-        f"blocked thread instead of progressing on its own."
-    )
-
-    # (b) Total wall-clock for both concurrent requests is close to
-    # max(A, B) (~ the time one request takes alone), not close to A + B.
     expected_solo_duration = len(_TOKENS) * _DELAY_SECONDS
     assert total_wall_clock < expected_solo_duration * 1.5, (
         f"total_wall_clock={total_wall_clock:.3f}s is not close to a "

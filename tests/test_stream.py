@@ -68,8 +68,8 @@ class TestStreamAccessControlSharedPath:
     """Both endpoints must use the same retrieval path and AgentLoop.
 
     /api/chat uses _run_agent() (which calls AgentLoop.run()).
-    /api/chat/stream uses AgentLoop.run_streaming() directly for
-    real token-level streaming. Both share _retrieve_permitted_chunks.
+    /api/chat/stream uses AgentLoop.run_streaming() directly for live
+    progress and safe final text. Both share _retrieve_permitted_chunks.
     """
 
     def test_chat_uses_run_agent(self) -> None:

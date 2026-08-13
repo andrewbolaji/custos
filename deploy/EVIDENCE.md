@@ -11,6 +11,12 @@ configuration is 36 resources and is **not** covered by this document; it is
 waiting on an AWS service quota request. See `deploy/README.md` for the
 difference between the two.
 
+This record proves only that dated Anthropic, egress-enabled, plaintext-HTTP
+apply/query/destroy cycle. It is not evidence that Bedrock mode, the current
+TLS-default listener, or either air-gapped plan has been applied in a real AWS
+account; their present evidence is limited to code review, validation, and
+mocked Terraform plan tests.
+
 The AWS account id is redacted throughout. This repository is public, and while
 an account id is not a credential, there is no reason to publish it.
 

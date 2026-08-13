@@ -3,6 +3,11 @@ output "alb_dns_name" {
   value       = aws_lb.custos.dns_name
 }
 
+output "application_url" {
+  description = "Client URL for the configured ALB listener. Plain HTTP appears only when both plaintext opt-in variables pass the plan-time guard."
+  value       = "${var.allow_plaintext_http ? "http" : "https"}://${aws_lb.custos.dns_name}"
+}
+
 output "ecr_repository_url" {
   description = "ECR repository URL to push the application image to before the ECS service can start."
   value       = aws_ecr_repository.custos.repository_url

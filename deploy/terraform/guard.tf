@@ -53,7 +53,7 @@ resource "terraform_data" "account_guard" {
 #    ECR (or an alternative sidecar-free path exists), air-gapped
 #    deployments of any llm_provider are blocked at plan time instead.
 resource "terraform_data" "egress_provider_guard" {
-  input = "${var.enable_egress}-${var.llm_provider}"
+  input = "${var.enable_egress}-${var.llm_provider}-${var.allow_plaintext_http}"
 
   lifecycle {
     precondition {
@@ -64,6 +64,16 @@ resource "terraform_data" "egress_provider_guard" {
     precondition {
       condition     = var.enable_egress == true
       error_message = "Refusing to proceed. enable_egress = false (air-gapped) cannot currently run this module AT ALL, regardless of llm_provider: the ECS task definition's Qdrant sidecar (see ecs.tf) is pulled from Docker Hub at apply time, and air-gapped subnets have no route to Docker Hub and no ECR mirror of that image. There is currently no air-gapped combination this module can deploy. Set enable_egress = true, or mirror qdrant/qdrant:v1.18.0 into an ECR repository this module can reach and update ecs.tf before attempting an air-gapped deployment."
+    }
+
+    precondition {
+      condition     = var.allow_plaintext_http || trimspace(var.acm_certificate_arn) != ""
+      error_message = "Refusing to proceed without TLS. Set acm_certificate_arn to a certificate in var.region. For an isolated synthetic-data demo only, set allow_plaintext_http = true and i_accept_plaintext = true explicitly."
+    }
+
+    precondition {
+      condition     = !var.allow_plaintext_http || var.i_accept_plaintext
+      error_message = "Refusing to create a plaintext HTTP listener without explicit acknowledgement. Set i_accept_plaintext = true only after accepting that credentials, queries, permissions, and document content will not be encrypted in transit."
     }
   }
 }

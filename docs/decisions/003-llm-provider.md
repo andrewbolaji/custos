@@ -63,3 +63,11 @@ Claude is the default. The codebase defines an `LLM` interface (`generate(system
 - The `LLM` interface is the contract; no generation code imports the Anthropic SDK directly.
 - README and threat model explicitly state the one-external-hop posture.
 - The local-model path is tested in the eval suite but may score lower on grounding/citation evals.
+
+## As shipped -- 2026-08-13 addendum
+
+The historical configuration name above was superseded. The implemented selector
+is `CUSTOS_LLM_PROVIDER=anthropic|bedrock`; `.env.example` documents that exact
+name, `ANTHROPIC_API_KEY`, the Bedrock region/model variables, and the default
+Anthropic model. GPT and local-model paths remain design alternatives, not shipped
+providers.

@@ -249,8 +249,11 @@ resource "aws_ecs_service" "custos" {
   name            = "custos-${var.environment}"
   cluster         = aws_ecs_cluster.main.id
   task_definition = aws_ecs_task_definition.custos.arn
-  desired_count   = var.desired_count
-  launch_type     = "FARGATE"
+  # Kept mechanically at 0 or 1 by variables.tf. Pending confirmations,
+  # rate limits, and monthly budget counters are local to one process/task;
+  # scaling out would make those controls inconsistent across requests.
+  desired_count = var.desired_count
+  launch_type   = "FARGATE"
 
   # ECS defaults this to 0 for any service with a load balancer attached.
   # At 0, alb.tf's health check (interval=10s, unhealthy_threshold=3) can

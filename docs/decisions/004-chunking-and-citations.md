@@ -76,3 +76,11 @@ Structural chunking with char-offset citation spans. The chunker:
 - Chunk metadata is stored alongside the vector in Qdrant's payload (section_path, offsets, permissions).
 - The retrieval eval suite (EVALS.md section 1) measures citation accuracy: does the cited span actually support the claim?
 - MAX_CHUNK_CHARS is configurable. The default (1500) balances coherence with embedding model limits.
+
+## As shipped -- 2026-08-13 addendum
+
+The shipped ingestion path reads Markdown source files and the structural
+chunker recognizes Markdown headings and paragraphs. No PDF, HTML, Word, or
+generic plain-text parser is implemented. The multi-format statements above
+record the intended direction; those formats remain future work and must not be
+presented as current ingestion support.

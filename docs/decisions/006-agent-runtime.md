@@ -192,3 +192,23 @@ Measured with `scripts/benchmark_agent_runtimes.py` against a live `ANTHROPIC_AP
 *Added after the deterministic proof above; nothing above this section was changed, this only appends what was subsequently measured, in the same style as ADR-001's Measured section.*
 
 `scripts/benchmark_agent_runtimes.py` ran against a live `ANTHROPIC_API_KEY` and both runtimes hit 73/73 on the full eval suite including the LLM-dependent cases (Requirement 3 above). Full numbers, method, and the caveat that this run cannot support a latency-winner claim: `docs/decisions/006-agent-runtime.md#requirement-4-measured` (this document, above) and `docs/benchmarks/agent-runtimes.md`. Headline: token overhead is zero, measured, not assumed (identical mean input_tokens across 45 live calls per runtime); latency showed no distinguishable framework effect against live network/API noise in a sequential (non-interleaved) run.
+
+## Current verification -- 2026-08-13 addendum
+
+The original 219-case statement above is retained as the dated measurement
+made when this ADR was written. A fresh pre-hardening run on 2026-08-13 found
+239 passing pytest cases; the streaming-boundary and tool-exception regression
+work added five more. Current machine-checked value: `CURRENT_PYTEST_COUNT=244`.
+`scripts/check_doc_numbers.py` now refreshes the suite and rejects stale current
+summary claims in CI rather than treating this historical paragraph as current.
+
+## Streaming safety -- 2026-08-13 addendum
+
+The token-forwarding and corrective `text_replace` behavior described in the
+historical state-machine section above was superseded after a second reviewer
+reproduced a complete SSN across client-visible chunk boundaries. Both runtimes
+now withhold the provider's authoritative final text, pass the complete answer
+through `resolve_response`, and only then emit one client-visible `text_delta`. Text-free `stream_progress`
+events retain cancellation and concurrency checkpoints. Regression tests exercise
+every split position of the supported SSN, email, and phone patterns and assert
+that every client-visible prefix is safe.
