@@ -54,13 +54,10 @@ from langgraph.config import get_stream_writer
 from langgraph.graph import END, StateGraph
 
 from custos.agent_loop import (
-    _CITATIONS_FENCE_RE,
-    _GUARD_SIZE,
     DEFAULT_MAX_STEPS,
     DEFAULT_TIMEOUT_SECONDS,
     AgentEvent,
     AgentResult,
-    _clean_guard_text,
     _wrap_tool_output,
 )
 from custos.interfaces import ToolCall, ToolResult
@@ -90,7 +87,6 @@ class _GraphState(TypedDict):
     text_parts: list[str]
     pending_assistant_content: list[Any]
     accumulated_raw_text: str
-    streamed_text_joined: str
     limit_reason: str
     elapsed: float
 
@@ -259,7 +255,6 @@ class LangGraphAgentLoop:
             text_parts=[],
             pending_assistant_content=[],
             accumulated_raw_text="",
-            streamed_text_joined="",
             limit_reason="",
             elapsed=0.0,
         )
@@ -338,10 +333,6 @@ class LangGraphAgentLoop:
     def _call_model_streaming(self, state: _GraphState, tools_arg: Any) -> dict[str, Any]:
         writer = get_stream_writer()
         accumulated_text: list[str] = []
-        streamed_text: list[str] = []
-        guard = ""
-        tool_use_detected = False
-        fence_hit = False
 
         with self._llm.client.messages.stream(
             model=self._llm.model,
@@ -352,56 +343,11 @@ class LangGraphAgentLoop:
             tools=tools_arg,
         ) as stream:
             for event in stream:
-                if (
-                    event.type == "content_block_start"
-                    and hasattr(event.content_block, "type")
-                    and event.content_block.type == "tool_use"
-                ):
-                    tool_use_detected = True
-                    if guard and not fence_hit:
-                        cleaned = _clean_guard_text(guard)
-                        if cleaned:
-                            writer(AgentEvent(kind="text_delta", data={"text": cleaned}))
-                            streamed_text.append(cleaned)
-                        guard = ""
-                    continue
-
                 if event.type == "content_block_delta" and hasattr(event.delta, "text"):
-                    token = event.delta.text
-                    accumulated_text.append(token)
-
-                    if tool_use_detected or fence_hit:
-                        continue
-
-                    guard += token
-
-                    if _CITATIONS_FENCE_RE.search(guard):
-                        fence_pos = guard.index("```citations")
-                        pre_fence = guard[:fence_pos]
-                        if pre_fence:
-                            cleaned = _clean_guard_text(pre_fence)
-                            if cleaned:
-                                writer(AgentEvent(kind="text_delta", data={"text": cleaned}))
-                                streamed_text.append(cleaned)
-                        fence_hit = True
-                        guard = ""
-                        continue
-
-                    if len(guard) > _GUARD_SIZE:
-                        emit = guard[:-_GUARD_SIZE]
-                        guard = guard[-_GUARD_SIZE:]
-                        cleaned = _clean_guard_text(emit)
-                        if cleaned:
-                            writer(AgentEvent(kind="text_delta", data={"text": cleaned}))
-                            streamed_text.append(cleaned)
+                    accumulated_text.append(event.delta.text)
+                    writer(AgentEvent(kind="stream_progress"))
 
             final_message = stream.get_final_message()
-
-        if guard and not fence_hit and not tool_use_detected:
-            cleaned = _clean_guard_text(guard)
-            if cleaned:
-                writer(AgentEvent(kind="text_delta", data={"text": cleaned}))
-                streamed_text.append(cleaned)
 
         tool_use_blocks: list[dict[str, Any]] = []
         for block in final_message.content:
@@ -416,7 +362,6 @@ class LangGraphAgentLoop:
             "tool_use_blocks": tool_use_blocks,
             "pending_assistant_content": final_message.content,
             "accumulated_raw_text": "".join(accumulated_text),
-            "streamed_text_joined": "".join(streamed_text),
         }
 
     def _node_gate_and_execute(self, state: _GraphState) -> dict[str, Any]:
@@ -523,9 +468,7 @@ class LangGraphAgentLoop:
 
         full_text = state["accumulated_raw_text"]
         answer = resolve_response(full_text, self._prompt_parts.chunk_lookup)
-        already_streamed = state["streamed_text_joined"]
-        if already_streamed.strip() != answer.text.strip():
-            self._emit(AgentEvent(kind="text_replace", data={"text": answer.text}))
+        self._emit(AgentEvent(kind="text_delta", data={"text": answer.text}))
         if answer.citations:
             self._emit(AgentEvent(kind="citations", data={"citations": answer.citations}))
         if answer.refused:

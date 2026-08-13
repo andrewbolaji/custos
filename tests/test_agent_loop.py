@@ -54,6 +54,11 @@ class ReadOnlyTool(Tool):
         return ToolResult(tool_name=self.name, output=f"Found: {arguments.get('q')}")
 
 
+class RaisingTool(ReadOnlyTool):
+    def run(self, arguments: dict[str, Any]) -> ToolResult:
+        raise RuntimeError("simulated tool failure")
+
+
 class SideEffectTool(Tool):
     """A side-effectful tool that should never execute without confirmation."""
 
@@ -259,6 +264,27 @@ class TestAgentLoopBounds:
         assert len(limit_events) == 1
         assert limit_events[0].data["reason"] == "max_steps"
 
+    def test_raising_tool_becomes_failed_result_and_stays_bounded(self) -> None:
+        llm = _make_llm()
+        llm._client.messages.create.return_value = FakeResponse(
+            content=[FakeToolUseBlock()]
+        )
+        registry = ToolRegistry()
+        registry.register(RaisingTool())
+
+        result = AgentLoop(
+            llm=llm, registry=registry, max_steps=2
+        ).run(_make_prompt_parts(), "keep calling the failing tool")
+
+        assert result.refused is True
+        assert len(result.tool_results) == 2
+        assert all("failed" in str(item.output) for item in result.tool_results)
+        assert llm._client.messages.create.call_count == 2
+        assert any(
+            event.kind == "limit_hit" and event.data["reason"] == "max_steps"
+            for event in result.events
+        )
+
     def test_timeout_enforced(self) -> None:
         llm = ClaudeLLM.__new__(ClaudeLLM)
         llm._model = "test"
@@ -386,12 +412,10 @@ def _make_llm() -> ClaudeLLM:
 
 
 class TestStreamingInvariant:
-    """Real token streaming: deltas yielded DURING the stream, not after."""
+    """Provider streaming with client-visible text held until final redaction."""
 
-    def test_streams_multiple_deltas(self) -> None:
-        """Several LLM tokens must produce several text_delta events."""
+    def test_safe_answer_is_emitted_once_after_provider_stream(self) -> None:
         llm = _make_llm()
-        # Tokens must exceed guard size (64 chars) to produce multiple deltas
         tokens = [
             "The PTO rate is ten days per year for new employees. ",
             "Unused days carry over up to five days into the next year. ",
@@ -406,24 +430,15 @@ class TestStreamingInvariant:
         events = list(loop.run_streaming(_make_prompt_parts(), "PTO?"))
 
         text_deltas = [e for e in events if e.kind == "text_delta"]
-        assert len(text_deltas) > 1, (
-            f"Expected multiple text_delta events, got {len(text_deltas)}. "
-            "Streaming must not collapse tokens into one blob."
-        )
+        assert len(text_deltas) == 1
         reconstructed = "".join(e.data["text"] for e in text_deltas)
         assert "PTO" in reconstructed
         assert "ten days" in reconstructed
+        assert len([e for e in events if e.kind == "stream_progress"]) == len(tokens)
 
-    def test_deltas_yielded_during_stream_not_after(self) -> None:
-        """text_delta events are yielded DURING stream iteration,
-        proving they arrive incrementally (not buffered and replayed).
-
-        This is the invariant that prevents regression to fake streaming.
-        We use tokens longer than the guard buffer (20 chars) so text
-        flushes happen while the stream is still producing tokens.
-        """
+    def test_progress_yields_during_stream_but_text_waits_for_redaction(self) -> None:
+        """Cancellation checkpoints remain live without exposing raw text."""
         llm = _make_llm()
-        # Each token is >64 chars so the guard flushes during iteration
         tokens = [
             "The PTO rate for new employees at Meridian is ten days per year monthly. ",
             "That rate applies to employees with zero to two years of service at the company. ",
@@ -450,18 +465,17 @@ class TestStreamingInvariant:
 
         loop = AgentLoop(llm=llm, registry=ToolRegistry())
         for event in loop.run_streaming(_make_prompt_parts(), "test"):
-            if event.kind == "text_delta":
-                yield_order.append("delta")
+            yield_order.append(event.kind)
 
         stream_indices = [i for i, x in enumerate(yield_order) if x == "stream"]
-        delta_indices = [i for i, x in enumerate(yield_order) if x == "delta"]
-        assert len(delta_indices) > 1, (
-            f"Expected multiple deltas, got {len(delta_indices)}: {yield_order}"
-        )
-        # At least one delta must appear before the last stream event
-        assert delta_indices[0] < stream_indices[-1], (
-            f"All deltas came after streaming finished: {yield_order}"
-        )
+        progress_indices = [
+            i for i, x in enumerate(yield_order) if x == "stream_progress"
+        ]
+        text_indices = [i for i, x in enumerate(yield_order) if x == "text_delta"]
+        assert len(progress_indices) == len(tokens)
+        assert progress_indices[0] < stream_indices[-1]
+        assert len(text_indices) == 1
+        assert text_indices[0] > stream_indices[-1]
 
     def test_citations_block_stripped_from_stream(self) -> None:
         """The ```citations``` block must never appear in text_delta events."""
@@ -659,6 +673,35 @@ class TestStreamingInvariant:
         assert "tool_use" not in full_text
         assert "tu_001" not in full_text
 
+    def test_raising_tool_stream_becomes_failed_result_and_stays_bounded(self) -> None:
+        llm = _make_llm()
+        tool_turn = FakeResponse(content=[FakeToolUseBlock()])
+        tool_stream = FakeStreamContext(
+            events=[
+                FakeStreamEvent(
+                    type="content_block_start",
+                    content_block=FakeContentBlock(type="tool_use"),
+                )
+            ],
+            final_message=tool_turn,
+        )
+        llm._client.messages.stream.return_value = tool_stream
+        registry = ToolRegistry()
+        registry.register(RaisingTool())
+
+        events = list(
+            AgentLoop(llm=llm, registry=registry, max_steps=2).run_streaming(
+                _make_prompt_parts(), "keep calling the failing tool"
+            )
+        )
+
+        assert llm._client.messages.stream.call_count == 2
+        assert len([event for event in events if event.kind == "tool_result"]) == 2
+        assert any(
+            event.kind == "limit_hit" and event.data["reason"] == "max_steps"
+            for event in events
+        )
+
     def test_pii_redacted_in_stream(self) -> None:
         """PII in streamed tokens is caught by per-token cleaning."""
         llm = _make_llm()
@@ -700,7 +743,6 @@ class TestStreamingInvariant:
         We verify the context manager's __exit__ is called.
         """
         llm = _make_llm()
-        # Tokens must exceed guard size (64 chars) to produce a delta
         tokens = [
             "The PTO rate for new employees at Meridian is ten days per year monthly. ",
             "Unused days carry over into the next year up to a maximum of five days total. ",
@@ -721,9 +763,9 @@ class TestStreamingInvariant:
         loop = AgentLoop(llm=llm, registry=ToolRegistry())
         gen = loop.run_streaming(_make_prompt_parts(), "test")
 
-        # Consume first delta then close (simulating client disconnect)
+        # Consume one internal checkpoint then close (simulating disconnect).
         first = next(gen)
-        assert first.kind == "text_delta"
+        assert first.kind == "stream_progress"
         gen.close()
 
         assert exit_called, (
@@ -734,54 +776,39 @@ class TestStreamingInvariant:
         # behavior we rely on, which is a fair assumption but worth knowing
         # is assumed rather than measured.
 
-    def test_long_email_never_leaks_in_any_delta(self) -> None:
-        """An email longer than the old guard (>20 chars) must never appear
-        unredacted in ANY text_delta event, not just the final reconciled text.
-
-        Email is the binding constraint on guard size. This test catches
-        the bug where a partial address straddling the emit/guard boundary
-        would stream unredacted.
-        """
-        llm = _make_llm()
-        long_email = "james.santos@example.org"  # 24 chars
-        assert len(long_email) > 20, "Test email must exceed old guard size"
-
-        # Split the email across multiple small tokens to maximize
-        # the chance of straddling the guard boundary
-        tokens = [
-            "Contact ",
-            "james.",
-            "santos@",
-            "example.",
-            "org for details.",
+    def test_pii_never_appears_in_any_client_visible_prefix(self) -> None:
+        """Every token split and every accumulated client prefix stays safe."""
+        cases = [
+            ("900-55-0000", "[SSN]"),
+            ("james.santos@example.org", "[EMAIL]"),
+            ("(312) 555-0199", "[PHONE]"),
         ]
-        final_msg = FakeResponse(content=[FakeTextBlock(text="".join(tokens))])
-        llm._client.messages.stream.return_value = FakeStreamContext.from_tokens(
-            tokens, final_msg
-        )
-
-        loop = AgentLoop(llm=llm, registry=ToolRegistry())
-        events = list(loop.run_streaming(_make_prompt_parts(), "contact?"))
-
-        # Check EVERY text_delta individually, not just the concatenation
-        for event in events:
-            if event.kind == "text_delta":
-                assert long_email not in event.data["text"], (
-                    f"Unredacted email in text_delta: {event.data['text']!r}"
-                )
-                assert "james.santos@example.org" not in event.data["text"], (
-                    f"Email leaked in delta: {event.data['text']!r}"
+        for sensitive, marker in cases:
+            raw_answer = f"A long preamble {'x' * 80} contact {sensitive} is private."
+            sensitive_start = raw_answer.index(sensitive)
+            for cut in range(1, len(sensitive)):
+                split = sensitive_start + cut
+                tokens = [raw_answer[:split], raw_answer[split:]]
+                llm = _make_llm()
+                final_msg = FakeResponse(content=[FakeTextBlock(text=raw_answer)])
+                llm._client.messages.stream.return_value = (
+                    FakeStreamContext.from_tokens(tokens, final_msg)
                 )
 
-        # Also verify the final text has it masked
-        text_deltas = [e for e in events if e.kind == "text_delta"]
-        replace_events = [e for e in events if e.kind == "text_replace"]
-        if replace_events:
-            final_text = replace_events[-1].data["text"]
-        else:
-            final_text = "".join(e.data["text"] for e in text_deltas)
-        assert long_email not in final_text, f"Email in final text: {final_text!r}"
-        assert "[EMAIL]" in final_text
+                events = list(
+                    AgentLoop(llm=llm, registry=ToolRegistry()).run_streaming(
+                        _make_prompt_parts(), "contact?"
+                    )
+                )
+                visible = "".join(
+                    event.data["text"]
+                    for event in events
+                    if event.kind == "text_delta"
+                )
+                for prefix_end in range(len(visible) + 1):
+                    assert sensitive not in visible[:prefix_end]
+                assert marker in visible
+                assert not any(event.kind == "text_replace" for event in events)
 
     def test_clean_answer_no_text_replace(self) -> None:
         """A clean answer with no artifacts must NOT produce a text_replace event.

@@ -63,6 +63,11 @@ class ReadOnlyTool(Tool):
         return ToolResult(tool_name=self.name, output=f"Found: {arguments.get('q')}")
 
 
+class RaisingTool(ReadOnlyTool):
+    def run(self, arguments: dict[str, Any]) -> ToolResult:
+        raise RuntimeError("simulated tool failure")
+
+
 class SideEffectTool(Tool):
     def __init__(self) -> None:
         self.executed = False
@@ -216,6 +221,27 @@ class TestBounds:
         assert len(limit_events) == 1
         assert limit_events[0].data["reason"] == "max_steps"
 
+    def test_raising_tool_becomes_failed_result_and_stays_bounded(self) -> None:
+        llm = _make_llm()
+        llm._client.messages.create.return_value = FakeResponse(
+            content=[FakeToolUseBlock()]
+        )
+        registry = ToolRegistry()
+        registry.register(RaisingTool())
+
+        result = LangGraphAgentLoop(
+            llm=llm, registry=registry, max_steps=2
+        ).run(_make_prompt_parts(), "keep calling the failing tool")
+
+        assert result.refused is True
+        assert len(result.tool_results) == 2
+        assert all("failed" in str(item.output) for item in result.tool_results)
+        assert llm._client.messages.create.call_count == 2
+        assert any(
+            event.kind == "limit_hit" and event.data["reason"] == "max_steps"
+            for event in result.events
+        )
+
     def test_timeout_enforced(self) -> None:
         llm = _make_llm()
         llm._client.messages.create.return_value = FakeResponse(
@@ -311,13 +337,12 @@ class FakeStreamContext:
 
 
 class TestStreaming:
-    def test_deltas_forwarded_live(self) -> None:
-        """Several tokens exceeding the guard buffer must produce multiple
-        text_delta events, proving the guard-buffer forwarding logic (ported
-        from AgentLoop.run_streaming) runs the same way here.
-        """
+    def test_answer_text_waits_for_complete_response(self) -> None:
         llm = _make_llm()
-        tokens = ["The PTO rate is ten days per year for new employees. " * 3]
+        tokens = [
+            "The PTO rate is ten days per year for new employees. ",
+            "Unused days carry over up to five days.",
+        ]
         llm._client.messages.stream.return_value = FakeStreamContext.from_tokens(
             tokens, FakeResponse(content=[FakeTextBlock(text="".join(tokens))])
         )
@@ -327,9 +352,45 @@ class TestStreaming:
         events = list(loop.run_streaming(_make_prompt_parts(), "a question"))
 
         delta_events = [e for e in events if e.kind == "text_delta"]
-        assert len(delta_events) >= 1
+        assert len(delta_events) == 1
         forwarded = "".join(e.data["text"] for e in delta_events)
-        assert len(forwarded) > 0
+        assert forwarded == "".join(tokens)
+        assert len([e for e in events if e.kind == "stream_progress"]) == len(tokens)
+
+    def test_pii_never_appears_in_any_client_visible_prefix(self) -> None:
+        cases = [
+            ("900-55-0000", "[SSN]"),
+            ("james.santos@example.org", "[EMAIL]"),
+            ("(312) 555-0199", "[PHONE]"),
+        ]
+        for sensitive, marker in cases:
+            raw_answer = f"A long preamble {'x' * 80} contact {sensitive} is private."
+            sensitive_start = raw_answer.index(sensitive)
+            for cut in range(1, len(sensitive)):
+                split = sensitive_start + cut
+                tokens = [raw_answer[:split], raw_answer[split:]]
+                llm = _make_llm()
+                llm._client.messages.stream.return_value = (
+                    FakeStreamContext.from_tokens(
+                        tokens,
+                        FakeResponse(content=[FakeTextBlock(text=raw_answer)]),
+                    )
+                )
+
+                events = list(
+                    LangGraphAgentLoop(
+                        llm=llm, registry=ToolRegistry()
+                    ).run_streaming(_make_prompt_parts(), "contact?")
+                )
+                visible = "".join(
+                    event.data["text"]
+                    for event in events
+                    if event.kind == "text_delta"
+                )
+                for prefix_end in range(len(visible) + 1):
+                    assert sensitive not in visible[:prefix_end]
+                assert marker in visible
+                assert not any(event.kind == "text_replace" for event in events)
 
     def test_side_effectful_tool_creates_real_pending_action(self) -> None:
         """Unlike run(), run_streaming() with a pending_store + session_id
@@ -379,3 +440,32 @@ class TestStreaming:
         assert action_id != ""
         assert store.get(action_id) is not None
         assert store.get(action_id).session_id == "sess-1"  # type: ignore[union-attr]
+
+    def test_raising_tool_stream_becomes_failed_result_and_stays_bounded(self) -> None:
+        llm = _make_llm()
+        tool_turn = FakeResponse(content=[FakeToolUseBlock()])
+        tool_stream = FakeStreamContext(
+            events=[
+                FakeStreamEvent(
+                    type="content_block_start",
+                    content_block=FakeContentBlock(type="tool_use"),
+                )
+            ],
+            final_message=tool_turn,
+        )
+        llm._client.messages.stream.return_value = tool_stream
+        registry = ToolRegistry()
+        registry.register(RaisingTool())
+
+        events = list(
+            LangGraphAgentLoop(
+                llm=llm, registry=registry, max_steps=2
+            ).run_streaming(_make_prompt_parts(), "keep calling the failing tool")
+        )
+
+        assert llm._client.messages.stream.call_count == 2
+        assert len([event for event in events if event.kind == "tool_result"]) == 2
+        assert any(
+            event.kind == "limit_hit" and event.data["reason"] == "max_steps"
+            for event in events
+        )
