@@ -15,6 +15,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from re import Pattern
 
+# This script is a CI/documentation verifier. Never let a developer's local
+# .env affect imports, measurements, or subprocesses.
+os.environ["PYTHON_DOTENV_DISABLED"] = "1"
+
 from custos.chunker import chunk_document
 from custos.ingest import CORPUS_DIR, load_manifest
 
