@@ -16,7 +16,7 @@ Read `../PREREQUISITES.md` in full before starting. In short:
 - An IAM role we can assume, see "The IAM role you create for us".
 - A decision on `enable_egress` and `llm_provider` together, see "Network and egress: a real choice, not a checkbox".
 - If `llm_provider = "anthropic"`, an Anthropic API key and a named holder; if `llm_provider = "bedrock"`, verified model access and daily token quota in the target account, see "Generation model credentials" and "Bedrock account prerequisites".
-- DNS control and an ACM certificate, if a custom domain is wanted, see "Custom domain and TLS".
+- DNS control and an ACM certificate for the default TLS deployment, see "Custom domain and TLS".
 - Corpus format, volume, location, and access rules, see "Your document corpus".
 
 ## `enable_egress` and `llm_provider`
@@ -129,8 +129,8 @@ adds a Terraform resource of its own.
 Every task launch -- not only the blocked air-gapped path above -- pulls the
 Qdrant sidecar image from Docker Hub through the NAT gateway. All tasks in
 this deployment share one NAT gateway's public IP, and Docker Hub's
-anonymous pull rate limit is enforced per IP: a restart storm, or raising
-`desired_count`, can hit `toomanyrequests` and land tasks in
+anonymous pull rate limit is enforced per IP: a restart storm can hit
+`toomanyrequests` and land tasks in
 `CannotPullContainerError`, the same failure mode the air-gapped guard above
 exists to prevent, just from a different cause. Mirroring the image into
 the existing ECR repository (the same fix noted above for closing the
@@ -178,7 +178,7 @@ change and regions differ.
 | NAT gateway (`enable_egress = true`) | ~$0.045/hour | Plus data processing per GB. Not created when air-gapped. |
 | VPC interface endpoint (`enable_egress = false`) | ~$0.01/hour each | Four of them in Bedrock air-gapped mode: `ecr.api`, `ecr.dkr`, `logs`, `bedrock-runtime`. See `network.tf`. Currently unreachable: `egress_provider_guard` in `guard.tf` blocks every `enable_egress = false` plan, so this row does not apply to any combination the module will currently deploy. |
 | VPC gateway endpoint (S3) | $0 | No hourly charge, only created when air-gapped -- same currently-blocked caveat as the row above. |
-| Fargate task, default size (1 vCPU / 2 GB) | ~$0.0494/hour | At published Fargate Linux/x86 rates of $0.04048/vCPU-hour and $0.004445/GB-hour: 1 × $0.04048 + 2 × $0.004445 = $0.04937/hour. The task now runs the custos app container and a Qdrant sidecar together (see `ecs.tf`), which is why the default size doubled from the prior 0.5 vCPU / 1 GB. Scales linearly with `task_cpu`, `task_memory`, and `desired_count`. |
+| Fargate task, default size (1 vCPU / 2 GB) | ~$0.0494/hour | At published Fargate Linux/x86 rates of $0.04048/vCPU-hour and $0.004445/GB-hour: 1 × $0.04048 + 2 × $0.004445/GB-hour = $0.04937/hour. The task runs the Custos app and Qdrant sidecar together. The module permits zero or one task; multi-task scaling requires shared confirmation and budget state first. |
 | ECR storage | $0.10/GB-month | Negligible for a demo corpus, this is layer storage, not documents. |
 | Secrets Manager secret (`llm_provider = "anthropic"` only) | $0.40/month flat | Per secret, regardless of how often it is read. Not created, and not billed, in Bedrock mode. |
 | CloudWatch Logs | ~$0.50/GB ingested, ~$0.03/GB-month stored | Usage-based, depends on log volume and `log_retention_days`. |

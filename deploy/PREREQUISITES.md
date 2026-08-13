@@ -195,19 +195,17 @@ item.
 
 ## Custom domain and TLS
 
-If you want Custos reachable at a domain you own, rather than the load
-balancer's raw AWS DNS name, you need:
+TLS is the module default. Before a plan can succeed, provide:
 
 - Control of the DNS zone for that domain, or someone on your side who can add
   a CNAME record on request.
 - An ACM certificate issued for that domain, in the same region as the
-  deployment. The HTTPS listener is written and ready in `alb.tf` but left
-  commented out until this certificate ARN exists.
+  deployment, passed as `acm_certificate_arn`.
 
-**Blocks if missing:** the deployment works over plain HTTP on the ALB's AWS
-DNS name. That is fine for a demo, not acceptable for anything handling real
-traffic, so treat the certificate as a prerequisite for go-live, not a
-nice-to-have added later.
+**Blocks if missing:** a plan-time precondition refuses to deploy without a
+certificate. An isolated synthetic-data demo can opt into HTTP only by setting
+both `allow_plaintext_http = true` and `i_accept_plaintext = true`; that path is
+never acceptable for credentials, real customer documents, or real traffic.
 
 ## Your document corpus
 

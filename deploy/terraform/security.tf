@@ -5,21 +5,13 @@
 
 resource "aws_security_group" "alb" {
   name        = "custos-${var.environment}-alb"
-  description = "Custos ALB. Inbound HTTP/HTTPS, outbound to the ECS tasks only."
+  description = "Custos ALB. Inbound on the configured listener, outbound to ECS."
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    description = "HTTPS"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = var.alb_internal ? [var.vpc_cidr] : ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "HTTP"
-    from_port   = 80
-    to_port     = 80
+    description = var.allow_plaintext_http ? "HTTP demo listener" : "HTTPS listener"
+    from_port   = var.allow_plaintext_http ? 80 : 443
+    to_port     = var.allow_plaintext_http ? 80 : 443
     protocol    = "tcp"
     cidr_blocks = var.alb_internal ? [var.vpc_cidr] : ["0.0.0.0/0"]
   }

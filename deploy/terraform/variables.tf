@@ -55,6 +55,24 @@ variable "alb_internal" {
   default     = false
 }
 
+variable "acm_certificate_arn" {
+  description = "ACM certificate ARN for the ALB HTTPS listener. Required unless allow_plaintext_http is explicitly enabled for a synthetic-data demo. The certificate must exist in var.region and cover the DNS name clients use."
+  type        = string
+  default     = ""
+}
+
+variable "allow_plaintext_http" {
+  description = "WARNING: true replaces the default HTTPS listener with plaintext HTTP. Use only for an isolated synthetic-data demo. Real credentials, queries, permissions, and document content can be observed or modified in transit. Requires i_accept_plaintext = true."
+  type        = bool
+  default     = false
+}
+
+variable "i_accept_plaintext" {
+  description = "Explicit acknowledgement required when allow_plaintext_http = true. This exists so plaintext transport is a reviewed choice rather than an inherited default."
+  type        = bool
+  default     = false
+}
+
 variable "container_port" {
   description = "TCP port the application container listens on inside the task. Must match the EXPOSE and CMD port in the Dockerfile, currently 8000, or the health check and target group will never see a healthy task."
   type        = number
@@ -85,13 +103,13 @@ variable "task_memory" {
 }
 
 variable "desired_count" {
-  description = "Number of task instances the ECS service keeps running. Raising this increases availability and the Fargate bill in direct proportion. 0 stops the service without destroying it, useful for a low-cost pause between demos."
+  description = "Number of task instances the ECS service keeps running. Limited to 0 or 1 because pending confirmations, rate limits, and monthly budget counters are process-local; values above 1 break those guarantees until shared state exists. 0 pauses the demo without destroying it."
   type        = number
   default     = 1
 
   validation {
-    condition     = var.desired_count >= 0
-    error_message = "desired_count cannot be negative."
+    condition     = contains([0, 1], var.desired_count)
+    error_message = "desired_count must be 0 or 1. Multi-instance deployment requires shared pending-action, rate-limit, and budget state first."
   }
 }
 

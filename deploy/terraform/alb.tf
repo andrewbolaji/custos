@@ -34,28 +34,13 @@ resource "aws_lb_target_group" "custos" {
 
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.custos.arn
-  port              = 80
-  protocol          = "HTTP"
+  port              = var.allow_plaintext_http ? 80 : 443
+  protocol          = var.allow_plaintext_http ? "HTTP" : "HTTPS"
+  ssl_policy        = var.allow_plaintext_http ? null : "ELBSecurityPolicy-TLS13-1-2-2021-06"
+  certificate_arn   = var.allow_plaintext_http ? null : var.acm_certificate_arn
 
   default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.custos.arn
   }
 }
-
-# HTTPS listener, commented out until a custom domain and ACM certificate
-# exist. See PREREQUISITES.md, "Custom domain and TLS certificate" for what
-# the customer needs to provide before this can be enabled.
-#
-# resource "aws_lb_listener" "https" {
-#   load_balancer_arn = aws_lb.custos.arn
-#   port              = 443
-#   protocol          = "HTTPS"
-#   ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
-#   certificate_arn   = var.acm_certificate_arn
-#
-#   default_action {
-#     type             = "forward"
-#     target_group_arn = aws_lb_target_group.custos.arn
-#   }
-# }
