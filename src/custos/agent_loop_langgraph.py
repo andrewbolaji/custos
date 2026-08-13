@@ -86,7 +86,7 @@ class _GraphState(TypedDict):
     tool_use_blocks: list[dict[str, Any]]
     text_parts: list[str]
     pending_assistant_content: list[Any]
-    accumulated_raw_text: str
+    final_raw_text: str
     limit_reason: str
     elapsed: float
 
@@ -204,13 +204,15 @@ class LangGraphAgentLoop:
         pending_store: PendingActionStore | None = None,
         history: list[dict[str, Any]] | None = None,
     ) -> Generator[AgentEvent, None, None]:
-        """Execute the agent loop with real token streaming. See
+        """Execute the agent loop with live progress and safe final text. See
         AgentLoop.run_streaming.
 
         Uses LangGraph's own custom-stream mode (get_stream_writer inside
         call_model / gate_and_execute / finalize / limit_hit) so events
         are forwarded live, node-execution-by-node-execution, not buffered
-        until the whole graph finishes.
+        until the whole graph finishes. Provider chunks produce text-free
+        progress checkpoints; answer text is emitted only after complete-
+        response resolution and PII redaction.
         """
         self._reset_for_call(
             streaming=True,
@@ -254,7 +256,7 @@ class LangGraphAgentLoop:
             tool_use_blocks=[],
             text_parts=[],
             pending_assistant_content=[],
-            accumulated_raw_text="",
+            final_raw_text="",
             limit_reason="",
             elapsed=0.0,
         )
@@ -332,7 +334,6 @@ class LangGraphAgentLoop:
 
     def _call_model_streaming(self, state: _GraphState, tools_arg: Any) -> dict[str, Any]:
         writer = get_stream_writer()
-        accumulated_text: list[str] = []
 
         with self._llm.client.messages.stream(
             model=self._llm.model,
@@ -344,24 +345,26 @@ class LangGraphAgentLoop:
         ) as stream:
             for event in stream:
                 if event.type == "content_block_delta" and hasattr(event.delta, "text"):
-                    accumulated_text.append(event.delta.text)
                     writer(AgentEvent(kind="stream_progress"))
 
             final_message = stream.get_final_message()
 
         tool_use_blocks: list[dict[str, Any]] = []
+        text_parts: list[str] = []
         for block in final_message.content:
             if block.type == "tool_use":
                 tool_use_blocks.append(
                     {"id": block.id, "name": block.name, "input": block.input}
                 )
+            elif block.type == "text":
+                text_parts.append(block.text)
 
         return {
             "step": state["step"] + 1,
             "text_parts": [],
             "tool_use_blocks": tool_use_blocks,
             "pending_assistant_content": final_message.content,
-            "accumulated_raw_text": "".join(accumulated_text),
+            "final_raw_text": "\n".join(text_parts),
         }
 
     def _node_gate_and_execute(self, state: _GraphState) -> dict[str, Any]:
@@ -466,7 +469,7 @@ class LangGraphAgentLoop:
             self._final_refused = answer.refused
             return {}
 
-        full_text = state["accumulated_raw_text"]
+        full_text = state["final_raw_text"]
         answer = resolve_response(full_text, self._prompt_parts.chunk_lookup)
         self._emit(AgentEvent(kind="text_delta", data={"text": answer.text}))
         if answer.citations:

@@ -64,7 +64,8 @@ class AgentEvent:
     streaming, or aggregated for the sync response.
     """
 
-    kind: str  # "tool_use", "tool_result", "text", "text_delta", "limit_hit", "confirm_action"
+    # Public events plus the internal, text-free "stream_progress" checkpoint.
+    kind: str
     data: dict[str, Any] = field(default_factory=dict)
 
 
@@ -293,11 +294,12 @@ class AgentLoop:
     ) -> Generator[AgentEvent, None, None]:
         """Execute the agent loop over the provider's streaming transport.
 
-        Provider chunks are accumulated until resolve_response can redact and
-        validate the complete answer. Only that safe answer is emitted as a
-        text_delta. stream_progress events yield control after each provider
-        chunk so the API can detect disconnects and concurrent requests do not
-        serialize; the API intentionally does not expose them to clients.
+        The provider's authoritative final message is held until
+        resolve_response can redact and validate the complete answer. Only that
+        safe answer is emitted as a text_delta. stream_progress events yield
+        control after each provider chunk so the API can detect disconnects and
+        concurrent requests do not serialize; the API intentionally does not
+        expose them to clients.
 
         history: prior conversation turns (untrusted client input).
         """
@@ -321,8 +323,6 @@ class AgentLoop:
                 )
                 return
 
-            accumulated_text: list[str] = []  # full raw text for resolve_response
-
             self._llm.notify_api_call()
             with self._llm.client.messages.stream(
                 model=self._llm.model,
@@ -337,13 +337,13 @@ class AgentLoop:
                         event.type == "content_block_delta"
                         and hasattr(event.delta, "text")
                     ):
-                        accumulated_text.append(event.delta.text)
                         yield AgentEvent(kind="stream_progress")
 
                 final_message = stream.get_final_message()
 
             # Collect tool_use blocks from the final message
             tool_use_blocks: list[dict[str, Any]] = []
+            text_parts: list[str] = []
             for block in final_message.content:
                 if block.type == "tool_use":
                     tool_use_blocks.append({
@@ -351,9 +351,11 @@ class AgentLoop:
                         "name": block.name,
                         "input": block.input,
                     })
+                elif block.type == "text":
+                    text_parts.append(block.text)
 
             if not tool_use_blocks:
-                full_text = "".join(accumulated_text)
+                full_text = "\n".join(text_parts)
                 answer = resolve_response(
                     full_text, prompt_parts.chunk_lookup
                 )

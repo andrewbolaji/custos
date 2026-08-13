@@ -503,12 +503,7 @@ class TestStreamingInvariant:
         assert "10 days" in full_streamed
 
     def test_inline_chunk_ids_reconciled(self) -> None:
-        """Inline [chunk_id] markers are stripped by resolve_response reconciliation.
-
-        The guard buffer (20 chars) cannot catch a ~50-char inline marker
-        mid-stream. resolve_response strips it on the full text, and the
-        text_replace event reconciles the displayed text.
-        """
+        """Inline [chunk_id] markers are stripped before text is emitted."""
         llm = _make_llm()
         tokens = ["PTO is 10 days", " [c1_x]", " per year."]
         final_msg = FakeResponse(content=[FakeTextBlock(text="".join(tokens))])
@@ -519,7 +514,7 @@ class TestStreamingInvariant:
         loop = AgentLoop(llm=llm, registry=ToolRegistry())
         events = list(loop.run_streaming(_make_prompt_parts(), "PTO?"))
 
-        # The final displayed text (after reconciliation) must be clean
+        # The only client-visible answer text must be clean.
         replace_events = [e for e in events if e.kind == "text_replace"]
         text_deltas = [e for e in events if e.kind == "text_delta"]
         if replace_events:
@@ -567,7 +562,7 @@ class TestStreamingInvariant:
         loop = AgentLoop(llm=llm, registry=ToolRegistry())
         events = list(loop.run_streaming(_make_prompt_parts(), "show code"))
 
-        # Check streamed + any reconciliation
+        # Check the client-visible answer text.
         text_deltas = [e for e in events if e.kind == "text_delta"]
         replace_events = [e for e in events if e.kind == "text_replace"]
         if replace_events:
@@ -703,7 +698,7 @@ class TestStreamingInvariant:
         )
 
     def test_pii_redacted_in_stream(self) -> None:
-        """PII in streamed tokens is caught by per-token cleaning."""
+        """PII in provider chunks is removed before answer text is emitted."""
         llm = _make_llm()
         tokens = [
             "Employee SSN: ",
@@ -720,7 +715,7 @@ class TestStreamingInvariant:
         loop = AgentLoop(llm=llm, registry=ToolRegistry())
         events = list(loop.run_streaming(_make_prompt_parts(), "SSN?"))
 
-        # Check final text (streamed + any reconciliation)
+        # Check the client-visible answer text.
         replace_events = [e for e in events if e.kind == "text_replace"]
         text_deltas = [e for e in events if e.kind == "text_delta"]
         if replace_events:
@@ -811,13 +806,9 @@ class TestStreamingInvariant:
                 assert not any(event.kind == "text_replace" for event in events)
 
     def test_clean_answer_no_text_replace(self) -> None:
-        """A clean answer with no artifacts must NOT produce a text_replace event.
-
-        Reconciliation should only fire on real divergence, not trivial
-        whitespace differences from guard flushing.
-        """
+        """A clean answer must not need a corrective text_replace event."""
         llm = _make_llm()
-        # Long enough tokens that the guard flushes during streaming
+        # Multiple provider chunks still produce one resolved client answer.
         tokens = [
             "The PTO accrual rate for new employees is ten days per year. ",
             "Unused days carry over up to five days into the next year.",

@@ -6,7 +6,7 @@ FakeStreamContext) so the two test files stay comparable side by side.
 
 This file is NOT a full clone of test_agent_loop.py's 809 lines. The
 authoritative parity proof that both runtimes hold the same guarantees is
-the 59 deterministic evals run against CUSTOS_AGENT_RUNTIME=native and
+the 61 deterministic evals run against CUSTOS_AGENT_RUNTIME=native and
 =langgraph (see evals/suites/action_gating.py, wired through
 custos.agent_runtime.build_agent_loop). This file is the fast local
 feedback loop during development: the handful of behaviors that must never
