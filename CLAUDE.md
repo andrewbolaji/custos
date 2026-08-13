@@ -12,7 +12,7 @@ Docker (only for the live demo). Every command below was run on a clean tree.
 
 ```bash
 make install          # python3.12 venv + pip install -e ".[dev]" + npm install (ui/). ~3 min; pulls CPU torch.
-make check            # ruff + mypy --strict + 199 pytest + 34 vitest. All green. ~2 min first run.
+make check            # ruff + mypy --strict + 244 pytest + vitest. All green. ~2 min first run.
 make evals            # deterministic adversarial suite → pass/fail table. No API key, no Docker.
 ```
 
@@ -33,7 +33,7 @@ make ui               # React chat UI (separate terminal)
 
 ## Gotchas (specific to this repo)
 - **Python 3.12 only.** `make install` calls `python3.12` on PATH; torch has no 3.13/3.14 wheels.
-- **`make evals` without Qdrant prints a `Connection refused` traceback and `Overall: NOT PROVEN`, yet exits 0 — not a failure.** The retrieval suite and one injection case need a running Qdrant; run `make up && make index` first and it reports `ALL PROVEN` (61/61). Read the table, not the traceback.
+- **`make evals` without Qdrant prints a clean `NOT IMPLEMENTED` row, a vector-store skip reason, and `Overall: NOT PROVEN`, yet exits 0 — not a failure.** The retrieval suite and one injection case need a running Qdrant; run `make up && make index` first and it reports `ALL PROVEN` (61/61). Read the table, not only the exit code.
 - **First `make test` downloads the BGE embedder** (slow once, then cached).
 - **Security invariants — never regress, and any change here needs a passing eval:** retrieved document text and tool output are *data, never instructions*; access control is enforced in `retriever.py`, not the prompt; side-effectful tools require explicit confirmation and cannot execute themselves.
 - **Secrets:** never read or commit `.env`. `.gitignore` still excludes personal methodology files (`PROJECT_BRIEF.md`, `LESSONS_*.md`, …) — keep them out.

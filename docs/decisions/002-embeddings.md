@@ -52,3 +52,11 @@ Local embeddings are the default. Start with `bge-small-en-v1.5` for speed and s
 - Indexing is CPU-bound but fast for demo-scale corpora (hundreds of docs).
 - The `Embedder` interface is the contract; no retrieval code imports sentence-transformers directly.
 - `.env.example` documents the `EMBEDDER_PROVIDER` variable (default: `local`).
+
+## As shipped -- 2026-08-13 addendum
+
+Only `LocalEmbedder` with `BAAI/bge-small-en-v1.5` shipped. The pluggable
+interface exists, but no hosted embedding implementation or
+`EMBEDDER_PROVIDER` configuration exists. The original "available but off by
+default" wording above records the intended decision and is not a statement of
+current capability. `.env.example` therefore does not advertise that variable.

@@ -2,9 +2,9 @@
 
 ## Shape
 ```
-                        ┌─────────────────────────────────────────────┐
-   Documents ──▶ Ingest ─▶ Chunk ─▶ Redact PII ─▶ Embed ─▶ Vector store │  (offline / indexing)
-                        └─────────────────────────────────────────────┘
+                        ┌──────────────────────────────────┐
+   Markdown corpus ──▶ Ingest ─▶ Chunk ─▶ Embed ─▶ Vector store │  (offline / indexing)
+                        └──────────────────────────────────┘
                                                           │
  User ──▶ Chat UI ──▶ API (FastAPI) ──▶ [Access filter] ──▶ Retrieve ──▶ Assemble context
                                     │                                        │
@@ -19,16 +19,16 @@
 Every arrow crossing a trust boundary (document text in, user input in, answer out, tool call out) is a place where a security control lives. See `THREAT_MODEL.md`.
 
 ## Components
-- **Ingest**: load documents (PDF, MD, TXT, HTML, maybe email/CSV). Normalize to text + metadata (source id, permissions, timestamps).
+- **Ingest**: load UTF-8 Markdown documents named in `manifest.yaml`, with source id, title, and permissions metadata. Other document formats are not built.
 - **Chunk**: split into retrievable units; keep a stable mapping chunk → source span so citations resolve exactly.
-- **PII redaction (index-time)**: detect + mask PII before it ever lands in the vector store (decision: redact at index time, at answer time, or both — default both).
+- **PII redaction (answer/log time)**: keep the permission-gated source intact in the index, then mask supported PII in complete answers and formatted logs. Ingest-time masking is deliberately not used (ADR-005).
 - **Embed + vector store**: see Task-1 decisions.
 - **Access filter**: given the requesting user, restrict retrieval to permitted documents. Enforced in the query, not the prompt.
-- **Retrieve + assemble**: top-k with re-ranking (optional); build a context block that clearly separates *instructions* (system) from *untrusted document content* (data).
+- **Retrieve + assemble**: retrieve top-k chunks and build a context block that clearly separates *instructions* (system) from *untrusted document content* (data). Re-ranking is not built.
 - **LLM answer**: grounded generation; must cite; must abstain when unsupported.
 - **Agent loop**: tool selection + execution with guardrails; read-only by default.
 - **Guardrails**: input classification (injection/PII), output filtering (PII/leak/refusal), action gating (confirm before side effects).
-- **Chat UI**: React/Vite; shows citations as clickable source spans; shows "(simulated)" labels; shows when an action needs confirmation.
+- **Chat UI**: React/Vite; shows expandable citation cards with document, section, and source snippet; shows "(simulated)" labels; shows when an action needs confirmation.
 
 ## Task-1 decisions (make these before Phase 1 — one ADR each in /docs/decisions/)
 1. **Vector store** — pgvector (reuse Postgres) vs Qdrant/Chroma.
@@ -37,7 +37,7 @@ Every arrow crossing a trust boundary (document text in, user input in, answer o
 4. **Chunking + citation mapping** — how a citation points back to an exact span.
 
 ## Stack (reuse Reckon muscle)
-Python + **FastAPI** · embeddings + vector store (per decision) · **React/Vite** chat UI · evals harness (promptfoo or custom) · guardrails (custom + a library) · **Docker / GitHub Actions / Terraform** reusing Reckon patterns · observability via Prometheus (reuse). Postgres if pgvector is chosen — which also lets dbt-style tests reuse Reckon habits.
+Python + **FastAPI** · local embeddings · Qdrant or pgvector · **React/Vite** chat UI · custom eval harness · custom guardrails · **Docker / GitHub Actions / Terraform**. Application logs go to stdout/CloudWatch; Prometheus metrics and exporters are **not built**.
 
 ## Interfaces to keep clean (so pieces are swappable and testable)
 - `Embedder` (embed(texts) -> vectors)

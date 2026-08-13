@@ -34,7 +34,7 @@ Documents in your system might contain tricky instructions (accidentally or deli
 
 Every security protection has an automated test that proves it works:
 
-- **55 security tests** across 5 test suites, all passing
+- **61 deterministic security evals** across 5 suites, all proven by `docker compose up -d qdrant && python -m custos.ingest && python -m evals.harness`
 - **Zero unauthorized actions** in adversarial testing
 - **Zero PII leaks** on a labeled set of 16 sensitive values
 - **Zero unauthorized document retrievals** when permissions are enforced
@@ -53,4 +53,3 @@ Scope of these guarantees:
 - **Date of birth, salary, address, and personal names** are not automatically masked yet. Detectors precise enough to catch these categories also catch legitimate data of the same shape, such as product prices and office addresses, and a masker with that false-positive rate degrades retrieval more than it protects. Document permissions are the primary control here.
 - **Identity** is supplied by the deployment, not by Custos. Access control is enforced at retrieval against whatever user context is passed in, so an SSO or JWT integration changes the identity source without touching the ACL path.
 - We defend the application layer. Network security, infrastructure hardening, and physical security are handled by the hosting environment.
-
