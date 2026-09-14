@@ -1,11 +1,19 @@
 import type { ChatStatus, Message } from "../types";
+import type { AccessGroup } from "../hooks/useChat";
 
 import { ShieldIcon } from "./ShieldIcon";
 
 interface ProvenanceRailProps {
   message: Message | null;
   status: ChatStatus;
+  accessGroup: AccessGroup;
 }
+
+const ACCESS_LABELS: Record<AccessGroup, string> = {
+  general: "Standard",
+  hr: "HR",
+  finance: "Finance",
+};
 
 function CheckIcon({ color = "#11996b" }: { color?: string }) {
   return (
@@ -24,7 +32,7 @@ function ClockIcon() {
   );
 }
 
-export function ProvenanceRail({ message, status }: ProvenanceRailProps) {
+export function ProvenanceRail({ message, status, accessGroup }: ProvenanceRailProps) {
   const hasCitations = message?.citations && message.citations.length > 0;
   const hasPending = message?.pendingConfirmation && !message.pendingConfirmation.expired;
   const hasGuardrail = message?.guardrailDetected === true;
@@ -32,8 +40,48 @@ export function ProvenanceRail({ message, status }: ProvenanceRailProps) {
 
   return (
     <aside className="rail">
-      <div className="rail-h">Provenance</div>
-      <div className="rail-sub">How this answer was built.</div>
+      <div className="rail-flow" aria-label="Answer workflow">
+        <span className="active">01 Ask</span>
+        <span>02 Inspect</span>
+        <span>03 Verify</span>
+      </div>
+      <div className="rail-title-row">
+        <div>
+          <div className="rail-h">Evidence</div>
+          <div className="rail-sub">How this answer was built.</div>
+        </div>
+        <ShieldIcon size={22} stroke="#2b57e0" strokeWidth={1.8} />
+      </div>
+
+      <div className="rail-access">
+        <span className="rail-access-icon">
+          <ShieldIcon size={14} stroke="#147a5d" strokeWidth={2.2} />
+        </span>
+        <span>
+          <small>Current access</small>
+          <b>{ACCESS_LABELS[accessGroup]} documents</b>
+        </span>
+      </div>
+
+      {!message && !isStreaming && (
+        <div className="rail-empty">
+          <div className="rail-empty-mark" aria-hidden="true">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+              <path d="M7 3h7l4 4v14H7z" stroke="currentColor" strokeWidth="1.5" />
+              <path d="M14 3v5h5M10 12h5M10 16h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+          </div>
+          <h2>Evidence appears here.</h2>
+          <p>Ask a question to see which documents were used and what Custos allowed the model to do.</p>
+          <ul>
+            <li>Source names and sections</li>
+            <li>Access-scope confirmation</li>
+            <li>Blocked instructions and held actions</li>
+          </ul>
+        </div>
+      )}
+
+      {(message || isStreaming) && <div className="rail-events">
 
       {hasCitations && (
         <>
@@ -101,10 +149,13 @@ export function ProvenanceRail({ message, status }: ProvenanceRailProps) {
         </div>
       )}
 
+      </div>}
+
       <div className="rail-foot">
-        <b>unauthorized_action_rate = 0</b><br />
-        <b>pii_leak_rate = 0</b><br />
-        Every answer cites its source.
+        <span className="rail-foot-label">Evaluation checks</span>
+        <span><b>Unauthorized actions</b><strong>0</strong></span>
+        <span><b>PII leaks</b><strong>0</strong></span>
+        <p>Measured in the current adversarial evaluation suite.</p>
       </div>
     </aside>
   );

@@ -12,6 +12,13 @@
   font-display: swap;
 }
 @font-face {
+  font-family: "Fraunces";
+  src: url("./fonts/Fraunces-SemiBold.woff2") format("woff2");
+  font-weight: 600 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
   font-family: "Space Grotesk";
   src: url("./fonts/SpaceGrotesk-Medium.woff2") format("woff2");
   font-weight: 500;
@@ -35,34 +42,37 @@
 
 :root {
   /* --- Surfaces (four-step ladder) --- */
-  --bg-body: #e2dcd0;     /* behind overscroll only; matches canvas */
-  --bg: #e2dcd0;           /* chat canvas: mid-tone */
-  --surface: #ffffff;      /* header + bubbles: white */
-  --surface-2: #f7f5f0;   /* rail + secondary: near-white */
+  --bg-body: #e9e3d8;
+  --bg: #f3efe6;
+  --surface: #fffdf8;
+  --surface-2: #f8f5ee;
+  --surface-3: #eee8dc;
 
   /* --- Ink --- */
-  --ink: #191710;
-  --ink-2: #57524a;
-  --muted: #8a8478;
-  --faint: #b3ad9f;
+  --ink: #18201d;
+  --ink-2: #4f5752;
+  --muted: #777d77;
+  --faint: #a9aaa4;
 
   /* --- Lines --- */
-  --line: #e7e2d7;
-  --line-2: #ddd7c9;
+  --line: #e5dfd2;
+  --line-2: #d5cebf;
+  --line-dark: #bcb4a4;
 
   /* --- Brand (cobalt) --- */
-  --cobalt: #2b57e0;
-  --cobalt-d: #2247c4;
-  --cobalt-soft: #eef1fd;
+  --cobalt: #2858e5;
+  --cobalt-d: #1f48c3;
+  --cobalt-soft: #eef2ff;
 
   /* --- Accents --- */
-  --amber-brand: #f0b429;  /* logo chief, large fills */
-  --amber-ink: #d99413;    /* small text: "requires approval", demo banner highlight */
-  --red: #df4a3d;
-  --green: #11996b;
+  --amber-brand: #efb62f;
+  --amber-ink: #a96f00;
+  --red: #c94d3f;
+  --green: #147a5d;
 
   /* --- Typography --- */
   --grotesk: "Space Grotesk", -apple-system, system-ui, sans-serif;
+  --serif: "Fraunces", Georgia, "Times New Roman", serif;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
   --mono: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
 
