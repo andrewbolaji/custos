@@ -55,7 +55,11 @@ export default function App() {
             />
           </div>
         </div>
-        <ProvenanceRail message={lastAssistant ?? null} status={state.status} />
+        <ProvenanceRail
+          message={lastAssistant ?? null}
+          status={state.status}
+          accessGroup={accessGroup}
+        />
       </div>
     </div>
   );
